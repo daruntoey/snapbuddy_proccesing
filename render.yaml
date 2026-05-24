@@ -101,5 +101,5 @@ databases:
     databaseName: snapbuddy
     user: snapbuddy
     region: oregon
-    plan: starter
+    plan: free
     postgresMajorVersion: 15
