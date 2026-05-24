@@ -1,0 +1,36 @@
+snapbuddy/
+├── backend/
+│   ├── app/
+│   │   ├── __init__.py
+│   │   ├── main.py
+│   │   ├── config.py
+│   │   ├── database.py
+│   │   ├── models/
+│   │   ├── schemas/
+│   │   ├── api/
+│   │   ├── services/
+│   │   ├── ai/
+│   │   ├── repositories/
+│   │   └── utils/
+│   ├── requirements.txt
+│   ├── Dockerfile
+│   └── .env.example
+├── frontend/
+│   ├── src/
+│   │   ├── app/
+│   │   ├── components/
+│   │   ├── lib/
+│   │   ├── types/
+│   │   └── styles/
+│   ├── public/
+│   ├── package.json
+│   ├── tsconfig.json
+│   ├── tailwind.config.ts
+│   ├── next.config.js
+│   └── Dockerfile
+├── docker-compose.yml
+├── render.yaml
+├── README.md
+├── DEPLOYMENT.md
+├── API_DOCUMENTATION.md
+└── .gitignore
