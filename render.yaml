@@ -20,16 +20,6 @@ services:
         fromDatabase:
           name: snapbuddy-db
           property: connectionString
-      - key: QDRANT_URL
-        fromService:
-          type: pserv
-          name: snapbuddy-qdrant
-          property: hostport
-      - key: REDIS_URL
-        fromService:
-          type: redis
-          name: snapbuddy-redis
-          property: connectionString
       - key: GEMINI_API_KEY
         sync: false
       - key: GOOGLE_CLOUD_PROJECT
@@ -48,8 +38,6 @@ services:
         value: 30
       - key: ENVIRONMENT
         value: production
-      - key: CORS_ORIGINS
-        value: https://snapbuddy.onrender.com
 
   # Frontend Service
   - type: web
@@ -75,28 +63,7 @@ services:
       - key: NEXT_PUBLIC_GOOGLE_MAPS_API_KEY
         sync: false
 
-  # Qdrant Vector Database (Private Service)
-  - type: pserv
-    name: snapbuddy-qdrant
-    env: docker
-    region: oregon
-    plan: free
-    dockerfilePath: ./infrastructure/qdrant.Dockerfile
-    disk:
-      name: qdrant-data
-      mountPath: /qdrant/storage
-      sizeGB: 10
-
-  # Redis Cache
-  - type: redis
-    name: snapbuddy-redis
-    region: oregon
-    plan: free
-    maxmemoryPolicy: allkeys-lru
-    ipAllowList: []
-
 databases:
-  # PostgreSQL with pgvector
   - name: snapbuddy-db
     databaseName: snapbuddy
     user: snapbuddy
