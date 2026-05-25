@@ -16,14 +16,21 @@ async def lifespan(app: FastAPI):
     logger.info("Starting SnapBuddy API...")
     
     # Initialize database
-    await init_db()
-    logger.info("Database initialized")
+    try:
+        await init_db()
+        logger.info("Database initialized")
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+        # Continue anyway for development
     
     yield
     
     # Cleanup
     logger.info("Shutting down...")
-    await close_db()
+    try:
+        await close_db()
+    except Exception as e:
+        logger.error(f"Database cleanup failed: {e}")
 
 # Create FastAPI app
 app = FastAPI(
@@ -62,13 +69,18 @@ async def root():
         "message": "SnapBuddy API",
         "version": "1.0.0",
         "docs": "/docs",
+        "status": "running"
     }
 
 
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "environment": settings.ENVIRONMENT}
+    return {
+        "status": "healthy",
+        "environment": settings.ENVIRONMENT,
+        "api_version": "1.0.0"
+    }
 
 
 if __name__ == "__main__":
