@@ -90,11 +90,21 @@ def get_sync_db() -> Session:
 
 async def init_db():
     """Initialize database tables."""
-    async with async_engine.begin() as conn:
-        # Create pgvector extension
-        await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
-        # Create all tables
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with async_engine.begin() as conn:
+            # Create pgvector extension
+            try:
+                await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+            except Exception as e:
+                logger.warning(f"Could not create vector extension: {e}")
+            
+            # Create all tables
+            await conn.run_sync(Base.metadata.create_all)
+            logger.info("Database tables created successfully")
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+        # Don't fail - let app start anyway
+        pass
 
 
 async def close_db():
