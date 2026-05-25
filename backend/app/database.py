@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from app.config import settings
+from loguru import logger
 
 # Async engine for production
 async_engine = create_async_engine(
