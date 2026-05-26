@@ -1,4 +1,5 @@
 """Database configuration and session management."""
+from sqlalchemy import text 
 from typing import AsyncGenerator
 
 from sqlalchemy import create_engine, event
@@ -93,18 +94,22 @@ async def init_db():
     """Initialize database tables."""
     try:
         async with async_engine.begin() as conn:
-            # Create pgvector extension
+            # Create pgvector extension (ใช้ text() wrapper)
             try:
-                await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
+                await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+                logger.info("✅ pgvector extension enabled successfully")
             except Exception as e:
-                logger.warning(f"Could not create vector extension: {e}")
+                logger.warning(f"⚠️ pgvector extension warning: {e}")
+                logger.info("⚠️ Continuing without vector support - some features may be limited")
             
             # Create all tables
             await conn.run_sync(Base.metadata.create_all)
-            logger.info("Database tables created successfully")
+            logger.info("✅ Database tables created successfully")
+            
     except Exception as e:
-        logger.error(f"Database initialization failed: {e}")
-        # Don't fail - let app start anyway
+        logger.error(f"❌ Database initialization failed: {e}")
+        logger.info("App will start but database features may not work")
+        # Don't crash the app
         pass
 
 
