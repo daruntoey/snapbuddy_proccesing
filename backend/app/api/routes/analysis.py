@@ -11,9 +11,9 @@ from app.services.auth_service import get_current_user
 router = APIRouter()
 
 @router.post("/mood")
-async def analyze_mood(
-    request: MoodAnalysisRequest,
-):
+async def analyze_mood(request: MoodAnalysisRequest):
+    # ✅ ไม่มี current_user parameter
+    
     """
     Analyze mood from text using AI (No images needed).
     """
