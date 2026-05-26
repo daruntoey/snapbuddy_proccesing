@@ -1,28 +1,29 @@
-"""Photographer matching routes."""
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
+"""AI Matching routes."""
+from fastapi import APIRouter
+from pydantic import BaseModel
 
-from app.database import get_db
-from app.schemas.matching import MatchRequest, MatchResponse
-from app.services.matching_service import matching_service
-from app.services.auth_service import get_current_user
+from app.services.ai_matching_service import ai_matching_service
 
 router = APIRouter()
 
-@router.post("/match-photographers", response_model=MatchResponse)
-async def match_photographers(
-    request: MatchRequest,
-    current_user = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Find and rank matching photographers."""
-    return await matching_service.find_matches(request, current_user.id, db)
 
-@router.get("/recommendations/{mood_spec_id}")
-async def get_recommendations(
-    mood_spec_id: int,
-    current_user = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Get saved recommendations."""
-    return await matching_service.get_saved_recommendations(mood_spec_id, current_user.id, db)
+class MatchRequest(BaseModel):
+    description: str
+    budget_max: int = 10000
+    location: str = "Bangkok"
+
+
+@router.post("/match")
+async def match_photographers(request: MatchRequest):
+    """Match photographers using AI + Google Sheets data."""
+    matches = await ai_matching_service.match_photographers(
+        user_description=request.description,
+        budget_max=request.budget_max,
+        location=request.location
+    )
+    
+    return {
+        "matches": matches,
+        "total": len(matches),
+        "query": request.description
+    }
