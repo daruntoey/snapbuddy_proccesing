@@ -1,26 +1,29 @@
-"""AI analysis routes."""
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List
-
-from app.database import get_db
-from app.schemas.analysis import MoodAnalysisRequest, MoodAnalysisResponse
-from app.services.analysis_service import analysis_service
-from app.services.auth_service import get_current_user
+"""AI Analysis routes - No authentication required."""
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import Optional, List
+from loguru import logger
 
 router = APIRouter()
 
-@router.post("/mood")
+
+class MoodAnalysisRequest(BaseModel):
+    text_description: Optional[str] = None
+    image_urls: Optional[List[str]] = None
+    budget_min: Optional[int] = None
+    budget_max: Optional[int] = None
+    location: Optional[str] = None
+
+
+@router.post("/mood")  # ✅ ไม่มี authentication
 async def analyze_mood(request: MoodAnalysisRequest):
-    # ✅ ไม่มี current_user parameter
-    
     """
-    Analyze mood from text using AI (No images needed).
+    Analyze mood from text using AI (No auth required).
     """
-    from app.ai.gemini_service import gemini_service
-    from app.ai.nlp_service import nlp_service
-    
     try:
+        from app.ai.gemini_service import gemini_service
+        from app.ai.nlp_service import nlp_service
+        
         # 1. Analyze text with NLP
         text_embedding = None
         if request.text_description:
@@ -28,21 +31,21 @@ async def analyze_mood(request: MoodAnalysisRequest):
                 request.text_description
             )
         
-        # 2. Generate mood analysis with Gemini (ไม่ต้องรูป)
+        # 2. Generate mood analysis with Gemini
         prompt = f"""
-        Analyze this photography aesthetic request:
+        Analyze this photography aesthetic request and respond ONLY with valid JSON:
         
         Description: {request.text_description or "No description"}
-        Budget: ${request.budget_min} - ${request.budget_max}
+        Budget: ${request.budget_min or 0} - ${request.budget_max or 10000}
         Location: {request.location or "Not specified"}
         
-        Provide detailed analysis in JSON format with keys:
-        - style: Photography style preference
-        - mood: Mood and atmosphere
-        - recommendations: Photographer characteristics needed
-        - elements: Key aesthetic elements
-        
-        Return ONLY valid JSON, no markdown.
+        Return JSON with these exact keys:
+        {{
+            "style": "photography style preference",
+            "mood": "mood and atmosphere",
+            "recommendations": "photographer characteristics needed",
+            "elements": ["key", "aesthetic", "elements"]
+        }}
         """
         
         analysis_text = await gemini_service.generate_content(prompt)
@@ -55,8 +58,8 @@ async def analyze_mood(request: MoodAnalysisRequest):
             analysis = {
                 "style": "Professional aesthetic",
                 "mood": "Clean and professional",
-                "recommendations": "Experienced photographer with portfolio",
-                "elements": ["professional lighting", "clean composition"]
+                "recommendations": "Experienced photographer",
+                "elements": ["professional lighting", "composition"]
             }
         
         return {
