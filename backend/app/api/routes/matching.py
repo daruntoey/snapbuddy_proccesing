@@ -15,6 +15,7 @@ class MatchRequest(BaseModel):
 
 @router.post("/match")
 async def match_photographers(request: MatchRequest):
+    # ✅ ไม่มี current_user parameter
     """Match photographers using AI + Google Sheets data."""
     matches = await ai_matching_service.match_photographers(
         user_description=request.description,
