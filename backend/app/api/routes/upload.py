@@ -10,9 +10,9 @@ from app.services.auth_service import get_current_user
 router = APIRouter()
 
 @router.post("/reference-images")
-async def upload_reference_images(
-    files: List[UploadFile] = File(...),
-):
+async def upload_reference_images(files: List[UploadFile] = File(...)):
+    # ✅ ไม่มี current_user parameter
+    
     """Upload reference images (no AI processing needed)."""
     if len(files) > 5:
         raise HTTPException(400, "Maximum 5 images allowed")
