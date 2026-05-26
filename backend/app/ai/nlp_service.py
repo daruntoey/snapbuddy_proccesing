@@ -27,7 +27,6 @@ class NLPMoodAnalyzer:
             
             if self.model is None:
                 logger.warning("⚠️ NLP model not available")
-                # Return random embedding instead of failing
                 return np.random.rand(384).astype(np.float32)
             
             embedding = self.model.encode(text, normalize_embeddings=True)
@@ -35,7 +34,6 @@ class NLPMoodAnalyzer:
             
         except Exception as e:
             logger.error(f"⚠️ NLP embedding failed: {e}")
-            # Return random embedding to continue
             return np.random.rand(384).astype(np.float32)
 
 nlp_service = NLPMoodAnalyzer()
