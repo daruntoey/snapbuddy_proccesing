@@ -68,3 +68,9 @@ black==24.1.1
 isort==5.13.2
 flake8==7.0.0
 mypy==1.8.0
+
+# Google sheet & drive
+google-auth==2.23.0
+google-auth-oauthlib==1.1.0
+google-auth-httplib2==0.1.1
+gspread==5.12.0
