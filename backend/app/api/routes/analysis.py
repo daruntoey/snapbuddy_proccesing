@@ -1,8 +1,11 @@
-"""AI Analysis routes - No authentication required."""
+"""Analysis routes — real NLP mood analysis."""
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
 from loguru import logger
+
+from app.ai.nlp_service import nlp_service
+from app.ai.gemini_service import gemini_service
 
 router = APIRouter()
 
@@ -18,25 +21,53 @@ class MoodAnalysisRequest(BaseModel):
 @router.post("/mood")
 async def analyze_mood(request: MoodAnalysisRequest):
     """
-    Analyze mood from text using AI (No auth required).
+    Analyse the user's mood/style description.
+    - Extracts NLP embedding
+    - Uses Gemini to interpret style preferences
     """
+    if not request.text_description:
+        raise HTTPException(status_code=400, detail="text_description is required")
+
+    logger.info(f"📝 Mood analysis: '{request.text_description[:80]}'")
+
     try:
-        logger.info(f"📝 Analyzing mood: {request.text_description}")
-        
-        # Return mock data ชั่วคราว
+        # Get NLP embedding (used internally for matching later)
+        embedding = await nlp_service.extract_text_embedding(request.text_description)
+
+        # Use Gemini to parse style keywords
+        prompt = f"""วิเคราะห์ความต้องการช่างภาพจาก: "{request.text_description}"
+
+ตอบ JSON เท่านั้น (ไม่ต้องมี markdown):
+{{
+  "style": "สไตล์หลักที่ต้องการ (1 คำ/วลี)",
+  "mood": "อารมณ์ภาพ",
+  "lighting": "แสงที่ต้องการ",
+  "location_type": "ประเภทสถานที่",
+  "edit_style": "สไตล์ตกแต่งภาพ",
+  "keywords": ["keyword1", "keyword2", "keyword3"]
+}}"""
+
+        gemini_raw = await gemini_service.generate_content(prompt)
+
+        import json, re
+        analysis = {}
+        try:
+            clean = re.sub(r"```(?:json)?|```", "", gemini_raw or "").strip()
+            analysis = json.loads(clean)
+        except Exception:
+            analysis = {
+                "style": request.text_description[:50],
+                "mood": "ไม่สามารถวิเคราะห์ได้",
+                "keywords": [],
+            }
+
         return {
-            "mood_spec_id": 1,
-            "analysis": {
-                "style": "Korean cafe aesthetic",
-                "mood": "Cozy, warm, inviting",
-                "recommendations": "Photographer with experience in cafe photography and natural lighting",
-                "elements": ["natural light", "warm tones", "cozy composition", "authentic details"]
-            },
-            "text_embedding": None,
             "status": "success",
-            "message": "Mock analysis (AI integration pending)"
+            "analysis": analysis,
+            "embedding_ready": embedding is not None,
+            "original_text": request.text_description,
         }
-        
+
     except Exception as e:
-        logger.error(f"❌ Analysis failed: {e}", exc_info=True)
-        raise HTTPException(500, f"Error: {str(e)}")
+        logger.error(f"Mood analysis failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
