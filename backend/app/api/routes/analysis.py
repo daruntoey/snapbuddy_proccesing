@@ -24,56 +24,60 @@ async def analyze_mood(request: MoodAnalysisRequest):
     if not request.text_description:
         raise HTTPException(status_code=400, detail="text_description is required")
 
-    logger.info(f"Mood analysis: {request.text_description[:80]}")
-
     try:
         prompt = (
-            "Analyze this photography request and return a JSON object.\n"
-            "Request: " + request.text_description + "\n\n"
-            "Return JSON with these keys: style, mood, lighting, location_type, edit_style, keywords (array).\n"
-            "Return ONLY the JSON object, no other text."
+            "You are a photography assistant. Analyze this request: "
+            + request.text_description
+            + "\n\nReturn ONLY a JSON object with these exact keys and no other text:\n"
+            + '{"style":"...","mood":"...","lighting":"...","location_type":"...","edit_style":"...","keywords":["...","...","..."]}'
         )
 
         gemini_raw = await gemini_service.generate_content(prompt)
 
-        raw_data = {}
+        # Parse whatever Gemini returns
+        raw = {}
         try:
             clean = re.sub(r"```(?:json)?|```", "", gemini_raw or "").strip()
             found = re.search(r'\{.*\}', clean, re.DOTALL)
             if found:
-                raw_data = json.loads(found.group())
+                raw = json.loads(found.group())
         except Exception:
             pass
 
-        # remap — รับ field ชื่ออะไรก็ได้จาก Gemini แล้วแปลงให้ตรง
-        def pick(d, *keys):
-            for k in keys:
-                for dk in d:
-                    if k.lower() in dk.lower():
-                        return d[dk]
-            return ""
+        # Helper: find value by partial key match
+        def get(d, *keys, default=""):
+            for key in keys:
+                for k, v in d.items():
+                    if key.lower() in k.lower() and isinstance(v, str):
+                        return v
+            return default
 
-        def pick_list(d, *keys):
-            for k in keys:
-                for dk in d:
-                    if k.lower() in dk.lower():
-                        v = d[dk]
+        def get_list(d, *keys):
+            for key in keys:
+                for k, v in d.items():
+                    if key.lower() in k.lower():
                         if isinstance(v, list):
-                            return v
+                            return [str(x) for x in v]
                         if isinstance(v, str):
-                            return [x.strip() for x in v.split(",")]
+                            return [x.strip() for x in v.split(",") if x.strip()]
             return []
 
+        # Extract lighting from elements/recommendations if missing
+        lighting = get(raw, "lighting", "light")
+        if not lighting:
+            elements = get_list(raw, "element", "recommend", "keyword")
+            lighting = next((e for e in elements if "light" in e.lower()), "")
+
         analysis = {
-            "style":         pick(raw_data, "style", "aesthetic"),
-            "mood":          pick(raw_data, "mood", "feeling", "atmosphere"),
-            "lighting":      pick(raw_data, "lighting", "light"),
-            "location_type": pick(raw_data, "location", "place", "venue"),
-            "edit_style":    pick(raw_data, "edit", "tone", "color", "grade"),
-            "keywords":      pick_list(raw_data, "keyword", "tag", "element", "recommend"),
+            "style":         get(raw, "style", "aesthetic", "type"),
+            "mood":          get(raw, "mood", "feeling", "atmosphere", "vibe"),
+            "lighting":      lighting,
+            "location_type": get(raw, "location", "place", "setting", "venue"),
+            "edit_style":    get(raw, "edit", "tone", "color", "grade", "processing"),
+            "keywords":      get_list(raw, "keyword", "tag", "element", "recommend"),
         }
 
-        # fallback ถ้า Gemini ไม่คืน JSON เลย
+        # Fallback for style
         if not analysis["style"]:
             analysis["style"] = request.text_description[:60]
 
