@@ -1,4 +1,4 @@
-"""Google Sheets service for data storage."""
+"""Google Sheets service — reads buddyProfile and buddyPortfolio sheets."""
 import gspread
 from google.oauth2.service_account import Credentials
 from typing import List, Dict, Optional
@@ -6,166 +6,347 @@ from loguru import logger
 import json
 import os
 
+
 class GoogleSheetsService:
     """Service for interacting with Google Sheets."""
-    
+
+    SCOPES = [
+        "https://www.googleapis.com/auth/spreadsheets.readonly",
+        "https://www.googleapis.com/auth/drive.readonly",
+    ]
+
     def __init__(self):
-        """Initialize Google Sheets client."""
+        self.client = None
+        self.sheet_id = os.getenv("GOOGLE_SHEET_ID")
+        self._spreadsheet = None
+        self._init_client()
+
+    def _init_client(self):
+        creds_json = os.getenv("GOOGLE_APPLICATION_CREDENTIALS_JSON")
+        if not creds_json:
+            logger.warning("⚠️  GOOGLE_APPLICATION_CREDENTIALS_JSON not set — using mock data")
+            return
         try:
-            # Load credentials from environment variable
-            creds_json = os.getenv('GOOGLE_APPLICATION_CREDENTIALS_JSON')
-            if creds_json:
-                creds_dict = json.loads(creds_json)
-                credentials = Credentials.from_service_account_info(
-                    creds_dict,
-                    scopes=[
-                        'https://www.googleapis.com/auth/spreadsheets',
-                        'https://www.googleapis.com/auth/drive.readonly'
-                    ]
-                )
-                self.client = gspread.authorize(credentials)
-                logger.info("✅ Google Sheets client initialized")
-            else:
-                self.client = None
-                logger.warning("⚠️ No Google credentials found")
-                
-            self.sheet_id = os.getenv('GOOGLE_SHEET_ID')
-            
+            creds_dict = json.loads(creds_json)
+            credentials = Credentials.from_service_account_info(creds_dict, scopes=self.SCOPES)
+            self.client = gspread.authorize(credentials)
+            logger.info("✅ Google Sheets client initialised")
         except Exception as e:
-            logger.error(f"Failed to initialize Google Sheets: {e}")
-            self.client = None
-    
-    def get_sheet(self, sheet_name: str):
-        """Get worksheet by name."""
+            logger.error(f"Failed to init Google Sheets client: {e}")
+
+    def _get_spreadsheet(self):
+        if self._spreadsheet:
+            return self._spreadsheet
         if not self.client or not self.sheet_id:
             return None
         try:
-            spreadsheet = self.client.open_by_key(self.sheet_id)
-            return spreadsheet.worksheet(sheet_name)
+            self._spreadsheet = self.client.open_by_key(self.sheet_id)
+            return self._spreadsheet
         except Exception as e:
-            logger.error(f"Failed to open sheet {sheet_name}: {e}")
+            logger.error(f"Cannot open spreadsheet: {e}")
             return None
-    
-    async def get_photographers(
-        self, 
+
+    def _get_worksheet(self, name: str):
+        ss = self._get_spreadsheet()
+        if not ss:
+            return None
+        try:
+            return ss.worksheet(name)
+        except Exception as e:
+            logger.error(f"Cannot open worksheet '{name}': {e}")
+            return None
+
+    # ------------------------------------------------------------------
+    # buddyProfile
+    # ------------------------------------------------------------------
+    async def get_buddies(
+        self,
         style: Optional[str] = None,
         min_rating: Optional[float] = None,
-        max_rate: Optional[int] = None
+        max_rate: Optional[int] = None,
+        city: Optional[str] = None,
     ) -> List[Dict]:
-        """Get photographers from Google Sheets with filters."""
+        """
+        Fetch buddies from the 'buddyProfile' sheet.
+
+        Columns: buddy_id, user_id, name, nickname, profile_image,
+                 phone, email, birth_date, gender, city, bio,
+                 experience_year, language, account_status,
+                 verification_level, created_at, average_rating,
+                 top_styles, portfolio_count
+        """
+        ws = self._get_worksheet("buddyProfile")
+        if not ws:
+            logger.warning("buddyProfile sheet unavailable — using mock data")
+            return self._mock_buddies()
+
         try:
-            worksheet = self.get_sheet('Photographers')
-            if not worksheet:
-                return self._get_mock_photographers()
-            
-            # Get all records
-            records = worksheet.get_all_records()
-            
-            # Apply filters
-            filtered = []
-            for record in records:
-                # Filter by style
-                if style and style.lower() not in record.get('styles', '').lower():
-                    continue
-                
-                # Filter by rating
-                if min_rating and record.get('rating', 0) < min_rating:
-                    continue
-                
-                # Filter by hourly rate
-                if max_rate and record.get('hourly_rate', 0) > max_rate:
-                    continue
-                
-                filtered.append(record)
-            
-            logger.info(f"Found {len(filtered)} photographers")
-            return filtered
-            
+            records = ws.get_all_records()
         except Exception as e:
-            logger.error(f"Failed to get photographers: {e}")
-            return self._get_mock_photographers()
-    
-    async def get_photographer_by_id(self, photographer_id: int) -> Optional[Dict]:
-        """Get single photographer by ID."""
+            logger.error(f"Failed to read buddyProfile: {e}")
+            return self._mock_buddies()
+
+        results = []
+        for r in records:
+            # Skip inactive / empty rows
+            if r.get("account_status", "").lower() not in ("active", ""):
+                continue
+
+            # Rating filter
+            try:
+                rating = float(r.get("average_rating", 0) or 0)
+            except (ValueError, TypeError):
+                rating = 0.0
+            if min_rating and rating < min_rating:
+                continue
+
+            # Style filter (checks top_styles + bio)
+            if style:
+                haystack = (
+                    str(r.get("top_styles", "")).lower()
+                    + " "
+                    + str(r.get("bio", "")).lower()
+                )
+                if style.lower() not in haystack:
+                    continue
+
+            # City filter
+            if city and city.lower() not in str(r.get("city", "")).lower():
+                continue
+
+            results.append({
+                "buddy_id":        str(r.get("buddy_id", "")),
+                "user_id":         str(r.get("user_id", "")),
+                "name":            str(r.get("name", "")),
+                "nickname":        str(r.get("nickname", "")),
+                "profile_image":   str(r.get("profile_image", "")),
+                "phone":           str(r.get("phone", "")),
+                "email":           str(r.get("email", "")),
+                "city":            str(r.get("city", "")),
+                "bio":             str(r.get("bio", "")),
+                "experience_year": int(r.get("experience_year", 0) or 0),
+                "language":        str(r.get("language", "Thai, English")),
+                "account_status":  str(r.get("account_status", "Active")),
+                "average_rating":  rating,
+                "top_styles":      str(r.get("top_styles", "")),
+                "portfolio_count": int(r.get("portfolio_count", 0) or 0),
+            })
+
+        logger.info(f"buddyProfile → {len(results)} buddies (filtered)")
+        return results
+
+    async def get_buddy_by_id(self, buddy_id: str) -> Optional[Dict]:
+        buddies = await self.get_buddies()
+        for b in buddies:
+            if b["buddy_id"] == str(buddy_id):
+                return b
+        return None
+
+    # ------------------------------------------------------------------
+    # buddyPortfolio
+    # ------------------------------------------------------------------
+    async def get_portfolio(self, buddy_id: Optional[str] = None) -> List[Dict]:
+        """
+        Fetch rows from the 'buddyPortfolio' sheet.
+
+        Columns: portfolio_id, buddy_id, image_url, category,
+                 mood_tag, lighting_tag, pose_style, location_type,
+                 edit_style, camera_type, upload_date,
+                 engagement_score, hero_shot
+        """
+        ws = self._get_worksheet("buddyPortfolio")
+        if not ws:
+            return self._mock_portfolio(buddy_id)
+
         try:
-            photographers = await self.get_photographers()
-            for p in photographers:
-                if p.get('photographer_id') == photographer_id:
-                    return p
-            return None
+            records = ws.get_all_records()
         except Exception as e:
-            logger.error(f"Failed to get photographer {photographer_id}: {e}")
-            return None
-    
+            logger.error(f"Failed to read buddyPortfolio: {e}")
+            return self._mock_portfolio(buddy_id)
+
+        results = []
+        for r in records:
+            if buddy_id and str(r.get("buddy_id", "")) != str(buddy_id):
+                continue
+            results.append({
+                "portfolio_id":    str(r.get("portfolio_id", "")),
+                "buddy_id":        str(r.get("buddy_id", "")),
+                "image_url":       str(r.get("image_url", "")),
+                "category":        str(r.get("category", "")),
+                "mood_tag":        str(r.get("mood_tag", "")),
+                "lighting_tag":    str(r.get("lighting_tag", "")),
+                "pose_style":      str(r.get("pose_style", "")),
+                "location_type":   str(r.get("location_type", "")),
+                "edit_style":      str(r.get("edit_style", "")),
+                "camera_type":     str(r.get("camera_type", "")),
+                "upload_date":     str(r.get("upload_date", "")),
+                "engagement_score": int(r.get("engagement_score", 0) or 0),
+                "hero_shot":       str(r.get("hero_shot", "")).upper() == "TRUE",
+            })
+
+        return results
+
+    # ------------------------------------------------------------------
+    # Build a rich text description of a buddy (for NLP embedding)
+    # ------------------------------------------------------------------
+    async def get_buddy_embedding_text(self, buddy: Dict) -> str:
+        """
+        Combine profile + portfolio tags into one descriptive text
+        for embedding/similarity purposes.
+        """
+        portfolio = await self.get_portfolio(buddy["buddy_id"])
+
+        # Collect all unique style signals from portfolio
+        mood_tags     = list({p["mood_tag"]     for p in portfolio if p["mood_tag"]})
+        lighting_tags = list({p["lighting_tag"] for p in portfolio if p["lighting_tag"]})
+        edit_styles   = list({p["edit_style"]   for p in portfolio if p["edit_style"]})
+        location_types = list({p["location_type"] for p in portfolio if p["location_type"]})
+        categories    = list({p["category"]     for p in portfolio if p["category"]})
+
+        parts = [
+            f"ชื่อ: {buddy.get('nickname') or buddy.get('name', '')}",
+            f"Bio: {buddy.get('bio', '')}",
+            f"สไตล์หลัก: {buddy.get('top_styles', '')}",
+            f"ประสบการณ์: {buddy.get('experience_year', 0)} ปี",
+            f"เมือง: {buddy.get('city', '')}",
+        ]
+        if mood_tags:
+            parts.append(f"Mood: {', '.join(mood_tags)}")
+        if lighting_tags:
+            parts.append(f"แสง: {', '.join(lighting_tags)}")
+        if edit_styles:
+            parts.append(f"สไตล์ตกแต่งภาพ: {', '.join(edit_styles)}")
+        if location_types:
+            parts.append(f"สถานที่: {', '.join(location_types)}")
+        if categories:
+            parts.append(f"ประเภทงาน: {', '.join(categories)}")
+
+        return ". ".join(parts)
+
+    # ------------------------------------------------------------------
+    # Bookings (write)
+    # ------------------------------------------------------------------
     async def add_booking(self, booking_data: Dict) -> Dict:
-        """Add new booking to Bookings sheet."""
+        """Append a new booking to the Bookings sheet."""
+        ws = self._get_worksheet("Bookings")
+        if not ws:
+            return {"booking_id": "BOOK_MOCK", **booking_data, "status": "confirmed"}
+
         try:
-            worksheet = self.get_sheet('Bookings')
-            if not worksheet:
-                return {"booking_id": 1, **booking_data, "status": "confirmed"}
-            
-            # Generate new booking ID
-            records = worksheet.get_all_records()
-            new_id = max([r.get('booking_id', 0) for r in records], default=0) + 1
-            
-            # Prepare row data
+            records = ws.get_all_records()
+            new_id = f"BOOK{len(records) + 1001}"
             row = [
                 new_id,
-                booking_data.get('user_email'),
-                booking_data.get('photographer_id'),
-                booking_data.get('booking_date'),
-                booking_data.get('duration'),
-                booking_data.get('location'),
-                'pending'
+                booking_data.get("seeker_id", ""),
+                booking_data.get("buddy_id", ""),
+                booking_data.get("booking_date", ""),
+                booking_data.get("booking_time", ""),
+                booking_data.get("location_name", ""),
+                booking_data.get("total_price", 0),
+                "pending",
             ]
-            
-            # Append row
-            worksheet.append_row(row)
+            ws.append_row(row)
             logger.info(f"✅ Booking {new_id} created")
-            
             return {"booking_id": new_id, **booking_data, "status": "pending"}
-            
         except Exception as e:
             logger.error(f"Failed to create booking: {e}")
-            return {"booking_id": 1, **booking_data, "status": "confirmed"}
-    
-    def _get_mock_photographers(self) -> List[Dict]:
-        """Return mock photographers data."""
+            return {"booking_id": "BOOK_MOCK", **booking_data, "status": "confirmed"}
+
+    # ------------------------------------------------------------------
+    # Mock data (fallback when Sheets is unavailable)
+    # ------------------------------------------------------------------
+    def _mock_buddies(self) -> List[Dict]:
         return [
             {
-                "photographer_id": 1,
-                "business_name": "Bangkok Studio Photography",
-                "bio": "Specializing in Korean cafe aesthetic",
-                "location": "Bangkok",
-                "hourly_rate": 2000,
-                "styles": "Korean cafe, natural light, cozy",
-                "rating": 4.8,
+                "buddy_id": "BUD001",
+                "user_id": "user01",
+                "name": "Thanya K.",
+                "nickname": "# T H A N Y A #",
+                "profile_image": "/avatar.jpg",
                 "phone": "081-234-5678",
-                "email": "bangkok@studio.com"
+                "email": "nat@snapbuddy.com",
+                "city": "Bangkok",
+                "bio": "ช่างภาพสายคาเฟ่ แสงธรรมชาติ และโทนเกาหลีนุ่ม ๆ เน้นเก็บรอยยิ้มที่เป็นธรรมชาติที่สุด",
+                "experience_year": 4,
+                "language": "Thai, English",
+                "account_status": "Active",
+                "average_rating": 4.9,
+                "top_styles": "Korean Soft, Candid, Sun-kissed Cafe",
+                "portfolio_count": 142,
             },
             {
-                "photographer_id": 2,
-                "business_name": "Urban Light Photography",
-                "bio": "Bright and airy minimalist photography",
-                "location": "Bangkok",
-                "hourly_rate": 2500,
-                "styles": "Minimalist, bright, editorial",
-                "rating": 4.7,
-                "phone": "082-345-6789",
-                "email": "urban@light.com"
+                "buddy_id": "BUD002",
+                "user_id": "user05",
+                "name": "ทินประภา",
+                "nickname": "thinprapa",
+                "profile_image": "",
+                "phone": "081-234-5682",
+                "email": "",
+                "city": "Bangkok",
+                "bio": "รับจ้างเพื่อนถ่ายรูปดิจิตอล/ไอโฟน ถ่ายงานรับปริญญา คาเฟ่ ร้านอาหาร สถานที่ท่องเที่ยว หน้าคอนเสิร์ต",
+                "experience_year": 2,
+                "language": "Thai, English",
+                "account_status": "Active",
+                "average_rating": 4.8,
+                "top_styles": "Cafe, Digital Camera, Graduation, Lifestyle, Travel",
+                "portfolio_count": 57,
             },
             {
-                "photographer_id": 3,
-                "business_name": "Candid Moments Studio",
-                "bio": "Natural and warm lifestyle photography",
-                "location": "Bangkok",
-                "hourly_rate": 1800,
-                "styles": "Natural, warm, lifestyle, candid",
-                "rating": 4.9,
-                "phone": "083-456-7890",
-                "email": "candid@moments.com"
-            }
+                "buddy_id": "BUD003",
+                "user_id": "user06",
+                "name": "Iam",
+                "nickname": "sudarat.sy",
+                "profile_image": "",
+                "phone": "081-234-5683",
+                "email": "",
+                "city": "สมุทรปราการ",
+                "bio": "เช่าเพื่อนถ่ายรูป/คาเฟ่/แหล่งท่องเที่ยว",
+                "experience_year": 3,
+                "language": "Thai, English",
+                "account_status": "Active",
+                "average_rating": 4.9,
+                "top_styles": "Cafe, Lifestyle, Travel",
+                "portfolio_count": 28,
+            },
         ]
 
-# Global instance
+    def _mock_portfolio(self, buddy_id: Optional[str] = None) -> List[Dict]:
+        items = [
+            {
+                "portfolio_id": "PORT001",
+                "buddy_id": "BUD001",
+                "image_url": "https://images.unsplash.com/photo-1555396273-367ea4eb4db5",
+                "category": "Cafe Portrait",
+                "mood_tag": "Korean Soft",
+                "lighting_tag": "Morning Light",
+                "pose_style": "Candid",
+                "location_type": "Cafe",
+                "edit_style": "Warm Pastel",
+                "camera_type": "Sony A7IV",
+                "upload_date": "2026-05-01",
+                "engagement_score": 95,
+                "hero_shot": True,
+            },
+            {
+                "portfolio_id": "PORT005",
+                "buddy_id": "BUD001",
+                "image_url": "https://images.unsplash.com/photo-1534528741775-53994a69daeb",
+                "category": "Close-up Portrait",
+                "mood_tag": "Candid",
+                "lighting_tag": "Natural Light",
+                "pose_style": "Candid",
+                "location_type": "Outdoor",
+                "edit_style": "Film Tone",
+                "camera_type": "Canon R6",
+                "upload_date": "2026-05-15",
+                "engagement_score": 98,
+                "hero_shot": True,
+            },
+        ]
+        if buddy_id:
+            return [p for p in items if p["buddy_id"] == buddy_id]
+        return items
+
+
+# Global singleton
 sheets_service = GoogleSheetsService()
