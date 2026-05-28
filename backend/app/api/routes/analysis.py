@@ -1,10 +1,10 @@
-"""Analysis routes — real NLP mood analysis."""
+"""Analysis routes — Gemini only, no NLP model loading."""
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
 from loguru import logger
+import json, re
 
-from app.ai.nlp_service import nlp_service
 from app.ai.gemini_service import gemini_service
 
 router = APIRouter()
@@ -26,13 +26,11 @@ async def analyze_mood(request: MoodAnalysisRequest):
     logger.info(f"📝 Mood analysis: '{request.text_description[:80]}'")
 
     try:
-        embedding = await nlp_service.extract_text_embedding(request.text_description)
-
         prompt = f"""วิเคราะห์ความต้องการช่างภาพจาก: "{request.text_description}"
 
-ตอบ JSON เท่านั้น (ไม่ต้องมี markdown):
+ตอบ JSON เท่านั้น ไม่ต้องมี markdown หรือ backtick:
 {{
-  "style": "สไตล์หลักที่ต้องการ (1 คำ/วลี)",
+  "style": "สไตล์หลักที่ต้องการ",
   "mood": "อารมณ์ภาพ",
   "lighting": "แสงที่ต้องการ",
   "location_type": "ประเภทสถานที่",
@@ -42,7 +40,6 @@ async def analyze_mood(request: MoodAnalysisRequest):
 
         gemini_raw = await gemini_service.generate_content(prompt)
 
-        import json, re
         analysis = {}
         try:
             clean = re.sub(r"```(?:json)?|```", "", gemini_raw or "").strip()
@@ -50,14 +47,13 @@ async def analyze_mood(request: MoodAnalysisRequest):
         except Exception:
             analysis = {
                 "style": request.text_description[:50],
-                "mood": "ไม่สามารถวิเคราะห์ได้",
+                "mood": "วิเคราะห์ไม่ได้",
                 "keywords": [],
             }
 
         return {
             "status": "success",
             "analysis": analysis,
-            "embedding_ready": embedding is not None,
             "original_text": request.text_description,
         }
 
