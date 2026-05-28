@@ -1,76 +1,47 @@
-"""Matching routes."""
-from fastapi import APIRouter
+"""Matching routes — powered by real buddyProfile + buddyPortfolio data."""
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from typing import Optional, List
+from loguru import logger
+
+from app.services.ai_matching_service import ai_matching_service
 
 router = APIRouter()
 
 
+class MatchRequest(BaseModel):
+    text_description: str
+    budget_max: Optional[int] = None
+    city: Optional[str] = None
+    min_rating: Optional[float] = None
+    top_k: int = 10
+
+
 @router.post("/match")
-async def match_photographers(request: dict):
-    """Match photographers - mock data."""
-    
-    matches = [
-        {
-            "photographer_id": 1,
-            "business_name": "Bangkok Studio Photography",
-            "hourly_rate": 2000,
-            "rating": 4.8,
-            "styles": "Korean cafe, natural light",
-            "match_score": 95.5,
-            "explanation": "Perfect for Korean cafe aesthetic"
-        },
-        {
-            "photographer_id": 2,
-            "business_name": "Urban Light Photography",
-            "hourly_rate": 2500,
-            "rating": 4.7,
-            "styles": "Minimalist, bright",
-            "match_score": 88.2,
-            "explanation": "Great for clean aesthetic"
-        },
-        {
-            "photographer_id": 3,
-            "business_name": "Candid Moments Studio",
-            "hourly_rate": 1800,
-            "rating": 4.9,
-            "styles": "Natural, warm",
-            "match_score": 82.7,
-            "explanation": "Best for authentic shots"
-        }
-    ]
-    
-    return {
-        "matches": matches,
-        "total": 3,
-        "status": "success"
-    }
+async def match_buddies(request: MatchRequest):
+    """
+    AI-powered buddy matching.
+    - Reads buddyProfile + buddyPortfolio from Google Sheets
+    - Ranks by NLP cosine similarity + rating + experience
+    - Adds Gemini explanations for top 5
+    """
+    if not request.text_description or not request.text_description.strip():
+        raise HTTPException(status_code=400, detail="text_description is required")
 
-
-@router.get("/photographers")
-async def get_photographers():
-    """Get all photographers."""
-    
-    photographers = [
-        {
-            "photographer_id": 1,
-            "business_name": "Bangkok Studio Photography",
-            "hourly_rate": 2000,
-            "rating": 4.8
-        },
-        {
-            "photographer_id": 2,
-            "business_name": "Urban Light Photography",
-            "hourly_rate": 2500,
-            "rating": 4.7
-        },
-        {
-            "photographer_id": 3,
-            "business_name": "Candid Moments Studio",
-            "hourly_rate": 1800,
-            "rating": 4.9
+    logger.info(f"🔍 Match request: '{request.text_description[:80]}'")
+    try:
+        matches = await ai_matching_service.match_buddies(
+            user_description=request.text_description,
+            budget_max=request.budget_max,
+            city=request.city,
+            min_rating=request.min_rating,
+            top_k=request.top_k,
+        )
+        return {
+            "matches": matches,
+            "total": len(matches),
+            "status": "success",
         }
-    ]
-    
-    return {
-        "photographers": photographers,
-        "total": 3
-    }
+    except Exception as e:
+        logger.error(f"Matching error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
