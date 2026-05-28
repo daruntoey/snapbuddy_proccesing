@@ -20,21 +20,14 @@ class MoodAnalysisRequest(BaseModel):
 
 @router.post("/mood")
 async def analyze_mood(request: MoodAnalysisRequest):
-    """
-    Analyse the user's mood/style description.
-    - Extracts NLP embedding
-    - Uses Gemini to interpret style preferences
-    """
     if not request.text_description:
         raise HTTPException(status_code=400, detail="text_description is required")
 
     logger.info(f"📝 Mood analysis: '{request.text_description[:80]}'")
 
     try:
-        # Get NLP embedding (used internally for matching later)
         embedding = await nlp_service.extract_text_embedding(request.text_description)
 
-        # Use Gemini to parse style keywords
         prompt = f"""วิเคราะห์ความต้องการช่างภาพจาก: "{request.text_description}"
 
 ตอบ JSON เท่านั้น (ไม่ต้องมี markdown):
