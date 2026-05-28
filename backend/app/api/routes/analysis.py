@@ -28,31 +28,54 @@ async def analyze_mood(request: MoodAnalysisRequest):
 
     try:
         prompt = (
-            'Return ONLY this exact JSON, no explanation, no markdown:\n'
-            '{"style":"X","mood":"X","lighting":"X","location_type":"X","edit_style":"X","keywords":["X","X","X"]}\n\n'
-            'Fill in X based on this photography request: '
-            + request.text_description
+            "Analyze this photography request and return a JSON object.\n"
+            "Request: " + request.text_description + "\n\n"
+            "Return JSON with these keys: style, mood, lighting, location_type, edit_style, keywords (array).\n"
+            "Return ONLY the JSON object, no other text."
         )
 
         gemini_raw = await gemini_service.generate_content(prompt)
 
-        analysis = {}
+        raw_data = {}
         try:
             clean = re.sub(r"```(?:json)?|```", "", gemini_raw or "").strip()
             found = re.search(r'\{.*\}', clean, re.DOTALL)
             if found:
-                analysis = json.loads(found.group())
-            else:
-                raise ValueError("No JSON found")
+                raw_data = json.loads(found.group())
         except Exception:
-            analysis = {
-                "style": "unknown",
-                "mood": "unknown",
-                "lighting": "",
-                "location_type": "",
-                "edit_style": "",
-                "keywords": [],
-            }
+            pass
+
+        # remap — รับ field ชื่ออะไรก็ได้จาก Gemini แล้วแปลงให้ตรง
+        def pick(d, *keys):
+            for k in keys:
+                for dk in d:
+                    if k.lower() in dk.lower():
+                        return d[dk]
+            return ""
+
+        def pick_list(d, *keys):
+            for k in keys:
+                for dk in d:
+                    if k.lower() in dk.lower():
+                        v = d[dk]
+                        if isinstance(v, list):
+                            return v
+                        if isinstance(v, str):
+                            return [x.strip() for x in v.split(",")]
+            return []
+
+        analysis = {
+            "style":         pick(raw_data, "style", "aesthetic"),
+            "mood":          pick(raw_data, "mood", "feeling", "atmosphere"),
+            "lighting":      pick(raw_data, "lighting", "light"),
+            "location_type": pick(raw_data, "location", "place", "venue"),
+            "edit_style":    pick(raw_data, "edit", "tone", "color", "grade"),
+            "keywords":      pick_list(raw_data, "keyword", "tag", "element", "recommend"),
+        }
+
+        # fallback ถ้า Gemini ไม่คืน JSON เลย
+        if not analysis["style"]:
+            analysis["style"] = request.text_description[:60]
 
         return {
             "status": "success",
