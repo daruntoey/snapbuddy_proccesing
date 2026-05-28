@@ -1,5 +1,5 @@
-"""Photographers routes using Google Sheets."""
-from fastapi import APIRouter, Query
+"""Buddy/Photographer routes — reads from buddyProfile + buddyPortfolio sheets."""
+from fastapi import APIRouter, Query, HTTPException
 from typing import Optional
 
 from app.services.sheets_service import sheets_service
@@ -8,24 +8,26 @@ router = APIRouter()
 
 
 @router.get("")
-async def get_photographers(
-    style: Optional[str] = Query(None),
-    min_rating: Optional[float] = Query(None),
-    max_rate: Optional[int] = Query(None),
+async def list_buddies(
+    style: Optional[str] = Query(None, description="กรองตามสไตล์ เช่น 'Korean Soft'"),
+    min_rating: Optional[float] = Query(None, description="คะแนน minimum เช่น 4.5"),
+    city: Optional[str] = Query(None, description="เมือง เช่น 'Bangkok'"),
 ):
-    """Get photographers from Google Sheets."""
-    photographers = await sheets_service.get_photographers(
+    """List all buddies from the buddyProfile sheet with optional filters."""
+    buddies = await sheets_service.get_buddies(
         style=style,
         min_rating=min_rating,
-        max_rate=max_rate
+        city=city,
     )
-    return {"photographers": photographers, "total": len(photographers)}
+    return {"buddies": buddies, "total": len(buddies)}
 
 
-@router.get("/{photographer_id}")
-async def get_photographer(photographer_id: int):
-    """Get photographer by ID."""
-    photographer = await sheets_service.get_photographer_by_id(photographer_id)
-    if not photographer:
-        return {"error": "Photographer not found"}, 404
-    return photographer
+@router.get("/{buddy_id}")
+async def get_buddy(buddy_id: str):
+    """Get a single buddy profile + portfolio by buddy_id."""
+    buddy = await sheets_service.get_buddy_by_id(buddy_id)
+    if not buddy:
+        raise HTTPException(status_code=404, detail=f"Buddy '{buddy_id}' not found")
+
+    portfolio = await sheets_service.get_portfolio(buddy_id)
+    return {**buddy, "portfolio": portfolio}
