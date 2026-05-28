@@ -26,17 +26,12 @@ async def analyze_mood(request: MoodAnalysisRequest):
     logger.info(f"📝 Mood analysis: '{request.text_description[:80]}'")
 
     try:
-        prompt = f"""วิเคราะห์ความต้องการช่างภาพจาก: "{request.text_description}"
+        prompt = f"""You are a photography style analyzer. Analyze this request and return ONLY a JSON object, no other text.
 
-ตอบ JSON เท่านั้น ไม่ต้องมี markdown หรือ backtick:
-{{
-  "style": "สไตล์หลักที่ต้องการ",
-  "mood": "อารมณ์ภาพ",
-  "lighting": "แสงที่ต้องการ",
-  "location_type": "ประเภทสถานที่",
-  "edit_style": "สไตล์ตกแต่งภาพ",
-  "keywords": ["keyword1", "keyword2", "keyword3"]
-}}"""
+Request: "{request.text_description}"
+
+Return exactly this JSON structure with these exact keys:
+{{"style":"main photography style","mood":"image mood/feeling","lighting":"lighting type","location_type":"location type","edit_style":"editing style","keywords":["word1","word2","word3"]}}"""
 
         gemini_raw = await gemini_service.generate_content(prompt)
 
