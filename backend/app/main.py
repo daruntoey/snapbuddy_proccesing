@@ -87,7 +87,23 @@ async def debug_gemini():
         "working_url": gemini_service.working_url,
     }
 
-
+@app.get("/debug/gemini-models")
+async def debug_gemini_models():
+    """List available Gemini models for this API key."""
+    import requests
+    from app.ai.gemini_service import gemini_service
+    
+    resp = requests.get(
+        f"https://generativelanguage.googleapis.com/v1beta/models?key={gemini_service.api_key}",
+        timeout=10
+    )
+    if resp.status_code == 200:
+        data = resp.json()
+        models = [m["name"] for m in data.get("models", []) 
+                  if "generateContent" in m.get("supportedGenerationMethods", [])]
+        return {"status": "ok", "available_models": models}
+    return {"status": "error", "code": resp.status_code, "body": resp.text[:300]}
+    
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
