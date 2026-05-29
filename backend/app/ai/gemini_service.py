@@ -1,4 +1,4 @@
-"""Gemini service — uses requests + asyncio.to_thread with 2026 model names."""
+"""Gemini service — requests + asyncio.to_thread."""
 import asyncio
 import json
 import os
@@ -7,14 +7,12 @@ from loguru import logger
 
 
 class GeminiService:
-    # Updated model list for 2026 — newest first
+    # gemini-2.5-flash is confirmed working from /debug/gemini-models
     ENDPOINTS = [
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent",
         "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview:generateContent",
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent",
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent",
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-8b:generateContent",
     ]
 
     def __init__(self):
@@ -26,10 +24,12 @@ class GeminiService:
             logger.info(f"GeminiService ready, key_length={len(self.api_key)}")
 
     def _sync_call(self, url: str, prompt: str) -> dict:
-        """Synchronous HTTP call — runs in thread pool."""
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.3, "maxOutputTokens": 2048},
+            "generationConfig": {
+                "temperature": 0.3,
+                "maxOutputTokens": 2048,
+            },
         }
         resp = requests.post(
             f"{url}?key={self.api_key}",
@@ -66,11 +66,12 @@ class GeminiService:
                     logger.warning(f"{model} returned {status}, trying next...")
                     continue
 
-                # 429 = rate limit, 403 = auth issue
-                logger.error(f"Gemini {status} from {model}: {body[:200]}")
                 if status == 429:
-                    continue  # try next model
-                break  # for 403 etc, no point retrying
+                    logger.warning(f"{model} rate limited, trying next...")
+                    continue
+
+                logger.error(f"Gemini {status} from {model}: {body[:200]}")
+                continue
 
             except requests.exceptions.Timeout:
                 logger.error(f"{model} timed out")
@@ -87,9 +88,8 @@ class GeminiService:
 
     def _mock(self) -> str:
         return json.dumps({
-            "style": "mock", "mood": "mock",
-            "lighting": "", "location_type": "",
-            "edit_style": "", "keywords": [],
+            "mood_tags": [], "pose_styles": [],
+            "location_types": [], "categories": [], "lighting_tags": [],
         })
 
 
