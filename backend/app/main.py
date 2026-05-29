@@ -4,35 +4,32 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from loguru import logger
+import time
 
 from app.config import settings
 from app.database import init_db, close_db
 from app.api.routes import auth, upload, analysis, matching, photographers, bookings, users
 
-# Lifecycle management
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan management."""
     logger.info("Starting SnapBuddy API...")
-    
-    # Initialize database
+    settings.validate_critical()
     try:
         await init_db()
         logger.info("Database initialized")
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
-        # Continue anyway for development
-    
+
     yield
-    
-    # Cleanup
+
     logger.info("Shutting down...")
     try:
         await close_db()
     except Exception as e:
         logger.error(f"Database cleanup failed: {e}")
 
-# Create FastAPI app
+
 app = FastAPI(
     title="SnapBuddy API",
     description="AI-Powered Aesthetic Photography Matching Platform",
@@ -42,17 +39,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Middleware
+# CORS — allow all Vercel preview URLs + configured origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins_list,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
-# Include routers
+# Routers
 app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(upload.router, prefix="/api/upload", tags=["Upload"])
 app.include_router(analysis.router, prefix="/api/analysis", tags=["AI Analysis"])
@@ -64,29 +62,18 @@ app.include_router(users.router, prefix="/api/users", tags=["Users"])
 
 @app.get("/")
 async def root():
-    """Root endpoint."""
-    return {
-        "message": "SnapBuddy API",
-        "version": "1.0.0",
-        "docs": "/docs",
-        "status": "running"
-    }
+    return {"message": "SnapBuddy API", "version": "1.0.0", "docs": "/docs", "status": "running"}
 
 
 @app.get("/health")
 async def health_check():
-    """Health check endpoint."""
-    return {
-        "status": "healthy",
-        "environment": settings.ENVIRONMENT,
-        "api_version": "1.0.0"
-    }
+    return {"status": "healthy", "environment": settings.ENVIRONMENT, "api_version": "1.0.0"}
+
 
 @app.get("/debug/gemini")
 async def debug_gemini():
     """Test Gemini connection directly."""
     from app.ai.gemini_service import gemini_service
-    import time
     start = time.time()
     result = await gemini_service.generate_content(
         'Reply ONLY with this JSON: {"status":"ok","model":"working"}'
@@ -99,6 +86,7 @@ async def debug_gemini():
         "api_key_length": len(gemini_service.api_key),
         "working_url": gemini_service.working_url,
     }
+
 
 if __name__ == "__main__":
     import uvicorn
