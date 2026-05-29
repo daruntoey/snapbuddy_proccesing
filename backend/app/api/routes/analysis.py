@@ -33,6 +33,27 @@ LIGHTING_TAGS = [
     "Cloudy Soft Light", "Golden Hour", "Indoor Ambient", "Indoor Soft Light",
     "Morning Light", "Natural Light", "Night Light", "Soft Daylight", "Window Light",
 ]
+
+EMPTY_ANALYSIS = {
+    "mood_tags": [], "pose_styles": [],
+    "location_types": [], "categories": [], "lighting_tags": [],
+}
+
+
+def filter_valid(values, allowed: list) -> list:
+    if not isinstance(values, list):
+        return []
+    # Exact match first, then case-insensitive fallback
+    result = []
+    for v in values:
+        if v in allowed:
+            result.append(v)
+        else:
+            # Case-insensitive match
+            match = next((a for a in allowed if a.lower() == str(v).lower()), None)
+            if match:
+                result.append(match)
+    return result
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -55,36 +76,32 @@ async def analyze_mood(request: MoodAnalysisRequest):
             "Analyze the user's photography request and pick the BEST MATCHING values "
             "ONLY from the provided lists. You may select multiple values per field.\n\n"
             f"User request: \"{request.text_description}\"\n\n"
-            "Available values:\n"
+            "Available values (use EXACT spelling):\n"
             f"mood_tags: {MOOD_TAGS}\n"
             f"pose_styles: {POSE_STYLES}\n"
             f"location_types: {LOCATION_TYPES}\n"
             f"categories: {CATEGORIES}\n"
             f"lighting_tags: {LIGHTING_TAGS}\n\n"
-            "Return ONLY a JSON object with these exact keys. "
-            "Each value must be a list of strings chosen STRICTLY from the lists above. "
-            "Do not invent new values. Do not include markdown.\n"
-            "Example format:\n"
-            '{"mood_tags":["Korean Soft","Cute Cafe"],'
-            '"pose_styles":["Candid","Natural Smile"],'
-            '"location_types":["Cafe"],'
-            '"categories":["Cafe Portrait","Cafe Lifestyle"],'
-            '"lighting_tags":["Morning Light","Natural Light"]}'
+            "Rules:\n"
+            "1. Use EXACT values from the lists — do NOT paraphrase or invent new values\n"
+            "2. Each field must be a JSON array (can be empty [] if nothing fits)\n"
+            "3. Return ONLY the JSON object, no markdown, no explanation\n\n"
+            "JSON format:\n"
+            '{"mood_tags":[...],"pose_styles":[...],'
+            '"location_types":[...],"categories":[...],"lighting_tags":[...]}'
         )
 
         gemini_raw = await gemini_service.generate_content(prompt)
+        logger.info(f"Gemini raw: {gemini_raw[:150]}")
 
-        # Parse JSON
-        analysis = {}
+        # Start with safe default — always has all keys
+        analysis = dict(EMPTY_ANALYSIS)
+
         try:
             clean = re.sub(r"```(?:json)?|```", "", gemini_raw or "").strip()
             found = re.search(r'\{.*\}', clean, re.DOTALL)
             if found:
                 raw = json.loads(found.group())
-                # Validate — keep only values that exist in our lists
-                def filter_valid(values: list, allowed: list) -> list:
-                    return [v for v in (values or []) if v in allowed]
-
                 analysis = {
                     "mood_tags":      filter_valid(raw.get("mood_tags", []),      MOOD_TAGS),
                     "pose_styles":    filter_valid(raw.get("pose_styles", []),    POSE_STYLES),
@@ -92,12 +109,11 @@ async def analyze_mood(request: MoodAnalysisRequest):
                     "categories":     filter_valid(raw.get("categories", []),     CATEGORIES),
                     "lighting_tags":  filter_valid(raw.get("lighting_tags", []),  LIGHTING_TAGS),
                 }
+                logger.info(f"Parsed analysis: {analysis}")
+            else:
+                logger.warning("No JSON found in Gemini response")
         except Exception as e:
-            logger.warning(f"JSON parse failed: {e}")
-            analysis = {
-                "mood_tags": [], "pose_styles": [],
-                "location_types": [], "categories": [], "lighting_tags": [],
-            }
+            logger.warning(f"JSON parse failed: {e} | raw: {gemini_raw[:200]}")
 
         return {
             "status": "success",
