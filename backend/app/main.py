@@ -82,6 +82,23 @@ async def health_check():
         "api_version": "1.0.0"
     }
 
+@app.get("/debug/gemini")
+async def debug_gemini():
+    """Test Gemini connection directly."""
+    from app.ai.gemini_service import gemini_service
+    import time
+    start = time.time()
+    result = await gemini_service.generate_content(
+        'Reply ONLY with this JSON: {"status":"ok","model":"working"}'
+    )
+    elapsed = round(time.time() - start, 2)
+    return {
+        "elapsed_seconds": elapsed,
+        "raw_response": result[:200],
+        "is_mock": '"mock"' in result,
+        "api_key_length": len(gemini_service.api_key),
+        "working_url": gemini_service.working_url,
+    }
 
 if __name__ == "__main__":
     import uvicorn
