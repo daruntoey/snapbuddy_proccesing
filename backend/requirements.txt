@@ -3,7 +3,7 @@ fastapi==0.109.0
 uvicorn==0.27.0
 python-multipart==0.0.6
 
-# Database (ถ้ายังต้อง)
+# Database
 sqlalchemy==2.0.25
 psycopg2-binary==2.9.9
 alembic==1.13.1
@@ -21,15 +21,13 @@ google-cloud-storage==2.14.0
 google-cloud-aiplatform==1.40.0
 google-generativeai==0.3.2
 
-# AI Models
-# torch==2.1.2
-# torchvision==0.16.2
-# sentence-transformers==2.3.1
-# transformers==4.37.2
+# gRPC pins — prevent 30+ version backtracking (saves 10+ min build time)
+grpcio==1.62.3
+grpcio-status==1.62.3
+grpcio-tools==1.62.3
 
-# ✅ Lightweight alternatives
-sentence-transformers==2.3.1  # รักษาไว้ (NLP)
-# transformers จะติดตั้งอัตโนมัติจาก sentence-transformers
+# AI Models (NLP — lazy loaded, not imported at startup)
+sentence-transformers==2.3.1
 
 # Utils
 python-dotenv==1.0.0
