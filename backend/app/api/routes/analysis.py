@@ -10,51 +10,58 @@ from app.ai.gemini_service import gemini_service
 
 router = APIRouter()
 
-# ── SnapBuddy Vocabulary ──────────────────────────────────────────────────────
-MOOD_TAGS = [
-    "Candid", "Clean Girl", "Cute Cafe", "Film Tone", "Korean Soft",
-    "Luxury", "Minimal", "Natural Fresh", "Street Vibe", "Sun-kissed", "Urban Casual",
-]
-POSE_STYLES = [
-    "Action", "Cafe Candid", "Candid", "Elegant", "Lifestyle Pose",
-    "Look Away", "Natural Smile", "Posed", "Romantic", "Sitting Pose", "Walking Shot",
-]
-LOCATION_TYPES = [
-    "Cafe", "Indoor", "Mall", "Museum", "Outdoor",
-    "Park", "Restaurant", "Rooftop", "Street", "Studio", "Tourist Spot",
-]
-CATEGORIES = [
-    "Cafe Lifestyle", "Cafe Portrait", "Casual Portrait", "Close-up Portrait",
-    "Couples", "Evening Vibe", "Event Portrait", "Film Look", "Lifestyle Portrait",
-    "Luxury Dining", "Minimalist", "Nature Portrait", "Outdoor Portrait",
-    "Street Fashion", "Street Portrait", "Sweet Cafe", "Travel Portrait",
-]
-LIGHTING_TAGS = [
-    "Cloudy Soft Light", "Golden Hour", "Indoor Ambient", "Indoor Soft Light",
-    "Morning Light", "Natural Light", "Night Light", "Soft Daylight", "Window Light",
-]
+MOOD_TAGS = ["Candid","Clean Girl","Cute Cafe","Film Tone","Korean Soft","Luxury","Minimal","Natural Fresh","Street Vibe","Sun-kissed","Urban Casual"]
+POSE_STYLES = ["Action","Cafe Candid","Candid","Elegant","Lifestyle Pose","Look Away","Natural Smile","Posed","Romantic","Sitting Pose","Walking Shot"]
+LOCATION_TYPES = ["Cafe","Indoor","Mall","Museum","Outdoor","Park","Restaurant","Rooftop","Street","Studio","Tourist Spot"]
+CATEGORIES = ["Cafe Lifestyle","Cafe Portrait","Casual Portrait","Close-up Portrait","Couples","Evening Vibe","Event Portrait","Film Look","Lifestyle Portrait","Luxury Dining","Minimalist","Nature Portrait","Outdoor Portrait","Street Fashion","Street Portrait","Sweet Cafe","Travel Portrait"]
+LIGHTING_TAGS = ["Cloudy Soft Light","Golden Hour","Indoor Ambient","Indoor Soft Light","Morning Light","Natural Light","Night Light","Soft Daylight","Window Light"]
 
-EMPTY_ANALYSIS = {
-    "mood_tags": [], "pose_styles": [],
-    "location_types": [], "categories": [], "lighting_tags": [],
-}
+EMPTY_ANALYSIS = {"mood_tags":[],"pose_styles":[],"location_types":[],"categories":[],"lighting_tags":[]}
 
 
 def filter_valid(values, allowed: list) -> list:
     if not isinstance(values, list):
         return []
-    # Exact match first, then case-insensitive fallback
     result = []
     for v in values:
         if v in allowed:
             result.append(v)
         else:
-            # Case-insensitive match
-            match = next((a for a in allowed if a.lower() == str(v).lower()), None)
-            if match:
-                result.append(match)
+            # case-insensitive fallback
+            m = next((a for a in allowed if a.lower() == str(v).lower()), None)
+            if m:
+                result.append(m)
     return result
-# ─────────────────────────────────────────────────────────────────────────────
+
+
+def parse_gemini_json(raw: str) -> dict:
+    """Try multiple strategies to extract JSON from Gemini response."""
+    if not raw:
+        return {}
+
+    # Strategy 1: direct parse
+    try:
+        return json.loads(raw.strip())
+    except Exception:
+        pass
+
+    # Strategy 2: remove markdown fences then parse
+    cleaned = re.sub(r"```(?:json)?|```", "", raw).strip()
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        pass
+
+    # Strategy 3: find first { to last } (handles extra text around JSON)
+    start = raw.find('{')
+    end = raw.rfind('}')
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(raw[start:end+1])
+        except Exception:
+            pass
+
+    return {}
 
 
 class MoodAnalysisRequest(BaseModel):
@@ -73,47 +80,37 @@ async def analyze_mood(request: MoodAnalysisRequest):
     try:
         prompt = (
             "You are a SnapBuddy photography assistant. "
-            "Analyze the user's photography request and pick the BEST MATCHING values "
-            "ONLY from the provided lists. You may select multiple values per field.\n\n"
-            f"User request: \"{request.text_description}\"\n\n"
-            "Available values (use EXACT spelling):\n"
+            "Analyze the request and pick BEST MATCHING values ONLY from the lists.\n\n"
+            f"Request: \"{request.text_description}\"\n\n"
             f"mood_tags: {MOOD_TAGS}\n"
             f"pose_styles: {POSE_STYLES}\n"
             f"location_types: {LOCATION_TYPES}\n"
             f"categories: {CATEGORIES}\n"
             f"lighting_tags: {LIGHTING_TAGS}\n\n"
-            "Rules:\n"
-            "1. Use EXACT values from the lists — do NOT paraphrase or invent new values\n"
-            "2. Each field must be a JSON array (can be empty [] if nothing fits)\n"
-            "3. Return ONLY the JSON object, no markdown, no explanation\n\n"
-            "JSON format:\n"
-            '{"mood_tags":[...],"pose_styles":[...],'
-            '"location_types":[...],"categories":[...],"lighting_tags":[...]}'
+            "Use EXACT spelling. Return ONLY this JSON (no markdown):\n"
+            '{"mood_tags":[...],"pose_styles":[...],"location_types":[...],"categories":[...],"lighting_tags":[...]}'
         )
 
         gemini_raw = await gemini_service.generate_content(prompt)
-        logger.info(f"Gemini raw: {gemini_raw[:150]}")
+        logger.info(f"Gemini full response: {gemini_raw}")
 
-        # Start with safe default — always has all keys
+        # Always start with safe default
         analysis = dict(EMPTY_ANALYSIS)
 
-        try:
-            clean = re.sub(r"```(?:json)?|```", "", gemini_raw or "").strip()
-            found = re.search(r'\{.*\}', clean, re.DOTALL)
-            if found:
-                raw = json.loads(found.group())
-                analysis = {
-                    "mood_tags":      filter_valid(raw.get("mood_tags", []),      MOOD_TAGS),
-                    "pose_styles":    filter_valid(raw.get("pose_styles", []),    POSE_STYLES),
-                    "location_types": filter_valid(raw.get("location_types", []), LOCATION_TYPES),
-                    "categories":     filter_valid(raw.get("categories", []),     CATEGORIES),
-                    "lighting_tags":  filter_valid(raw.get("lighting_tags", []),  LIGHTING_TAGS),
-                }
-                logger.info(f"Parsed analysis: {analysis}")
-            else:
-                logger.warning("No JSON found in Gemini response")
-        except Exception as e:
-            logger.warning(f"JSON parse failed: {e} | raw: {gemini_raw[:200]}")
+        raw_dict = parse_gemini_json(gemini_raw)
+        logger.info(f"Parsed dict: {raw_dict}")
+
+        if raw_dict:
+            analysis = {
+                "mood_tags":      filter_valid(raw_dict.get("mood_tags", []),      MOOD_TAGS),
+                "pose_styles":    filter_valid(raw_dict.get("pose_styles", []),    POSE_STYLES),
+                "location_types": filter_valid(raw_dict.get("location_types", []), LOCATION_TYPES),
+                "categories":     filter_valid(raw_dict.get("categories", []),     CATEGORIES),
+                "lighting_tags":  filter_valid(raw_dict.get("lighting_tags", []),  LIGHTING_TAGS),
+            }
+            logger.info(f"Final analysis: {analysis}")
+        else:
+            logger.warning(f"Could not parse JSON from: {gemini_raw[:300]}")
 
         return {
             "status": "success",
@@ -128,7 +125,6 @@ async def analyze_mood(request: MoodAnalysisRequest):
 
 @router.get("/vocabulary")
 async def get_vocabulary():
-    """Return all available SnapBuddy tag vocabularies."""
     return {
         "mood_tags": MOOD_TAGS,
         "pose_styles": POSE_STYLES,
