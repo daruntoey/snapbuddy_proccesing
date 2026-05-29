@@ -1,4 +1,4 @@
-"""Analysis routes — Gemini only, no NLP model loading."""
+"""Analysis routes — Gemini with constrained SnapBuddy vocabulary."""
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional, List
@@ -9,6 +9,31 @@ import re
 from app.ai.gemini_service import gemini_service
 
 router = APIRouter()
+
+# ── SnapBuddy Vocabulary ──────────────────────────────────────────────────────
+MOOD_TAGS = [
+    "Candid", "Clean Girl", "Cute Cafe", "Film Tone", "Korean Soft",
+    "Luxury", "Minimal", "Natural Fresh", "Street Vibe", "Sun-kissed", "Urban Casual",
+]
+POSE_STYLES = [
+    "Action", "Cafe Candid", "Candid", "Elegant", "Lifestyle Pose",
+    "Look Away", "Natural Smile", "Posed", "Romantic", "Sitting Pose", "Walking Shot",
+]
+LOCATION_TYPES = [
+    "Cafe", "Indoor", "Mall", "Museum", "Outdoor",
+    "Park", "Restaurant", "Rooftop", "Street", "Studio", "Tourist Spot",
+]
+CATEGORIES = [
+    "Cafe Lifestyle", "Cafe Portrait", "Casual Portrait", "Close-up Portrait",
+    "Couples", "Evening Vibe", "Event Portrait", "Film Look", "Lifestyle Portrait",
+    "Luxury Dining", "Minimalist", "Nature Portrait", "Outdoor Portrait",
+    "Street Fashion", "Street Portrait", "Sweet Cafe", "Travel Portrait",
+]
+LIGHTING_TAGS = [
+    "Cloudy Soft Light", "Golden Hour", "Indoor Ambient", "Indoor Soft Light",
+    "Morning Light", "Natural Light", "Night Light", "Soft Daylight", "Window Light",
+]
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 class MoodAnalysisRequest(BaseModel):
@@ -26,60 +51,53 @@ async def analyze_mood(request: MoodAnalysisRequest):
 
     try:
         prompt = (
-            "You are a photography assistant. Analyze this request: "
-            + request.text_description
-            + "\n\nReturn ONLY a JSON object with these exact keys and no other text:\n"
-            + '{"style":"...","mood":"...","lighting":"...","location_type":"...","edit_style":"...","keywords":["...","...","..."]}'
+            "You are a SnapBuddy photography assistant. "
+            "Analyze the user's photography request and pick the BEST MATCHING values "
+            "ONLY from the provided lists. You may select multiple values per field.\n\n"
+            f"User request: \"{request.text_description}\"\n\n"
+            "Available values:\n"
+            f"mood_tags: {MOOD_TAGS}\n"
+            f"pose_styles: {POSE_STYLES}\n"
+            f"location_types: {LOCATION_TYPES}\n"
+            f"categories: {CATEGORIES}\n"
+            f"lighting_tags: {LIGHTING_TAGS}\n\n"
+            "Return ONLY a JSON object with these exact keys. "
+            "Each value must be a list of strings chosen STRICTLY from the lists above. "
+            "Do not invent new values. Do not include markdown.\n"
+            "Example format:\n"
+            '{"mood_tags":["Korean Soft","Cute Cafe"],'
+            '"pose_styles":["Candid","Natural Smile"],'
+            '"location_types":["Cafe"],'
+            '"categories":["Cafe Portrait","Cafe Lifestyle"],'
+            '"lighting_tags":["Morning Light","Natural Light"]}'
         )
 
         gemini_raw = await gemini_service.generate_content(prompt)
 
-        # Parse whatever Gemini returns
-        raw = {}
+        # Parse JSON
+        analysis = {}
         try:
             clean = re.sub(r"```(?:json)?|```", "", gemini_raw or "").strip()
             found = re.search(r'\{.*\}', clean, re.DOTALL)
             if found:
                 raw = json.loads(found.group())
-        except Exception:
-            pass
+                # Validate — keep only values that exist in our lists
+                def filter_valid(values: list, allowed: list) -> list:
+                    return [v for v in (values or []) if v in allowed]
 
-        # Helper: find value by partial key match
-        def get(d, *keys, default=""):
-            for key in keys:
-                for k, v in d.items():
-                    if key.lower() in k.lower() and isinstance(v, str):
-                        return v
-            return default
-
-        def get_list(d, *keys):
-            for key in keys:
-                for k, v in d.items():
-                    if key.lower() in k.lower():
-                        if isinstance(v, list):
-                            return [str(x) for x in v]
-                        if isinstance(v, str):
-                            return [x.strip() for x in v.split(",") if x.strip()]
-            return []
-
-        # Extract lighting from elements/recommendations if missing
-        lighting = get(raw, "lighting", "light")
-        if not lighting:
-            elements = get_list(raw, "element", "recommend", "keyword")
-            lighting = next((e for e in elements if "light" in e.lower()), "")
-
-        analysis = {
-            "style":         get(raw, "style", "aesthetic", "type"),
-            "mood":          get(raw, "mood", "feeling", "atmosphere", "vibe"),
-            "lighting":      lighting,
-            "location_type": get(raw, "location", "place", "setting", "venue"),
-            "edit_style":    get(raw, "edit", "tone", "color", "grade", "processing"),
-            "keywords":      get_list(raw, "keyword", "tag", "element", "recommend"),
-        }
-
-        # Fallback for style
-        if not analysis["style"]:
-            analysis["style"] = request.text_description[:60]
+                analysis = {
+                    "mood_tags":      filter_valid(raw.get("mood_tags", []),      MOOD_TAGS),
+                    "pose_styles":    filter_valid(raw.get("pose_styles", []),    POSE_STYLES),
+                    "location_types": filter_valid(raw.get("location_types", []), LOCATION_TYPES),
+                    "categories":     filter_valid(raw.get("categories", []),     CATEGORIES),
+                    "lighting_tags":  filter_valid(raw.get("lighting_tags", []),  LIGHTING_TAGS),
+                }
+        except Exception as e:
+            logger.warning(f"JSON parse failed: {e}")
+            analysis = {
+                "mood_tags": [], "pose_styles": [],
+                "location_types": [], "categories": [], "lighting_tags": [],
+            }
 
         return {
             "status": "success",
@@ -90,3 +108,15 @@ async def analyze_mood(request: MoodAnalysisRequest):
     except Exception as e:
         logger.error(f"Mood analysis failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/vocabulary")
+async def get_vocabulary():
+    """Return all available SnapBuddy tag vocabularies."""
+    return {
+        "mood_tags": MOOD_TAGS,
+        "pose_styles": POSE_STYLES,
+        "location_types": LOCATION_TYPES,
+        "categories": CATEGORIES,
+        "lighting_tags": LIGHTING_TAGS,
+    }
