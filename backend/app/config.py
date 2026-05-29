@@ -3,13 +3,12 @@ import json
 import os
 from functools import lru_cache
 from typing import List, Optional
+from loguru import logger
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Application settings."""
-
     # Application
     APP_NAME: str = "SnapBuddy"
     ENVIRONMENT: str = "development"
@@ -21,14 +20,14 @@ class Settings(BaseSettings):
     DB_POOL_SIZE: int = 10
     DB_MAX_OVERFLOW: int = 20
 
-    # Google Cloud (optional — sheets_service has mock fallback)
+    # Google Cloud
     GOOGLE_CLOUD_PROJECT: Optional[str] = None
     GCS_BUCKET_NAME: Optional[str] = None
     GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None
     GOOGLE_APPLICATION_CREDENTIALS_JSON: Optional[str] = None
     GOOGLE_SHEET_ID: Optional[str] = None
 
-    # Gemini API (optional — gemini_service has mock fallback)
+    # Gemini
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-1.5-flash"
     GEMINI_MAX_RETRIES: int = 3
@@ -54,11 +53,17 @@ class Settings(BaseSettings):
     # Google Maps
     GOOGLE_MAPS_API_KEY: Optional[str] = None
 
-    # CORS
-    CORS_ORIGINS: str = "http://localhost:3000,https://snapbuddy-backend.onrender.com"
+    # CORS — includes localhost + Vercel wildcard
+    CORS_ORIGINS: str = (
+        "http://localhost:3000,"
+        "http://localhost:3001,"
+        "https://snapbuddy.vercel.app,"
+        "https://*.vercel.app,"
+        "https://snapbuddy-frontend.onrender.com"
+    )
 
     # File Upload
-    MAX_UPLOAD_SIZE: int = 10485760  # 10MB
+    MAX_UPLOAD_SIZE: int = 10485760
     ALLOWED_EXTENSIONS: str = "jpg,jpeg,png,webp"
 
     # AI Models
@@ -73,7 +78,7 @@ class Settings(BaseSettings):
     DEFAULT_PAGE_SIZE: int = 20
     MAX_PAGE_SIZE: int = 100
 
-    # Matching Algorithm weights
+    # Matching weights
     STYLE_WEIGHT: float = 0.40
     PERFORMANCE_WEIGHT: float = 0.25
     BUDGET_WEIGHT: float = 0.15
@@ -89,7 +94,7 @@ class Settings(BaseSettings):
 
     @property
     def cors_origins_list(self) -> List[str]:
-        return [o.strip() for o in self.CORS_ORIGINS.split(",")]
+        return [o.strip() for o in self.CORS_ORIGINS.split(",") if o.strip()]
 
     @property
     def allowed_extensions_list(self) -> List[str]:
@@ -108,6 +113,17 @@ class Settings(BaseSettings):
             except json.JSONDecodeError:
                 pass
         return None
+
+    def validate_critical(self):
+        """Log warnings for missing critical settings."""
+        if not self.GEMINI_API_KEY:
+            logger.warning("GEMINI_API_KEY not set — Gemini will use mock responses")
+        if not self.GOOGLE_APPLICATION_CREDENTIALS_JSON:
+            logger.warning("GOOGLE_APPLICATION_CREDENTIALS_JSON not set — Sheets will use mock data")
+        if self.JWT_SECRET == "dev-secret-change-in-production":
+            logger.warning("JWT_SECRET is using default value — set a strong secret in production!")
+        if not self.DATABASE_URL:
+            logger.warning("DATABASE_URL not set — database features disabled")
 
 
 @lru_cache()
