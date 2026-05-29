@@ -1,49 +1,66 @@
 """Gemini service for AI content generation."""
-from google import generativeai as genai
-from loguru import logger
 import asyncio
 import os
+import json
+
+from loguru import logger
 
 
 class GeminiService:
     def __init__(self):
-        api_key = os.getenv('GEMINI_API_KEY')
-        if not api_key:
-            logger.warning("GEMINI_API_KEY not found - using mock")
-            self.model = None
+        self.model = None
+        self.api_key = os.getenv("GEMINI_API_KEY", "")
+        if not self.api_key:
+            logger.warning("GEMINI_API_KEY not set")
             return
         try:
-            genai.configure(api_key=api_key)
-            self.model = genai.GenerativeModel('gemini-pro')
-            logger.info("Gemini model initialized")
+            import google.generativeai as genai
+            genai.configure(api_key=self.api_key)
+            # ลอง model name ที่รองรับใน version 0.3.2
+            for model_name in ["gemini-1.0-pro", "gemini-pro"]:
+                try:
+                    self.model = genai.GenerativeModel(model_name)
+                    logger.info(f"Gemini ready: {model_name}")
+                    break
+                except Exception:
+                    continue
+            if not self.model:
+                logger.error("No Gemini model available")
         except Exception as e:
-            logger.error(f"Failed to init Gemini: {e}")
-            self.model = None
+            logger.error(f"Gemini init failed: {e}")
 
     async def generate_content(self, prompt: str) -> str:
+        if not self.model:
+            logger.warning("Gemini not available - using mock")
+            return self._mock()
         try:
-            if not self.model:
-                return self._mock(prompt)
+            logger.info(f"Calling Gemini... prompt length={len(prompt)}")
 
-            # run sync SDK in thread to avoid blocking event loop
-            response = await asyncio.to_thread(
-                self.model.generate_content, prompt
+            def _call():
+                resp = self.model.generate_content(
+                    prompt,
+                    generation_config={"temperature": 0.3, "max_output_tokens": 500},
+                )
+                return resp.text
+
+            result = await asyncio.wait_for(
+                asyncio.to_thread(_call),
+                timeout=25.0,
             )
-            return response.text
-
+            logger.info(f"Gemini OK: {result[:80]}")
+            return result
+        except asyncio.TimeoutError:
+            logger.error("Gemini timeout after 25s")
+            return self._mock()
         except Exception as e:
-            logger.error(f"Gemini error: {e}")
-            return self._mock(prompt)
+            logger.error(f"Gemini error: {type(e).__name__}: {e}")
+            return self._mock()
 
-    def _mock(self, prompt: str) -> str:
-        import json
+    def _mock(self) -> str:
         return json.dumps({
-            "style": "mock",
-            "mood": "mock",
-            "lighting": "",
-            "location_type": "",
-            "edit_style": "",
-            "keywords": []
+            "style": "mock", "mood": "mock",
+            "lighting": "", "location_type": "",
+            "edit_style": "", "keywords": [],
         })
 
 
