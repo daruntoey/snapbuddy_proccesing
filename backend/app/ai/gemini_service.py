@@ -16,14 +16,13 @@ class GeminiService:
         try:
             import google.generativeai as genai
             genai.configure(api_key=self.api_key)
-            # ลอง model name ที่รองรับใน version 0.3.2
             for model_name in ["gemini-1.0-pro", "gemini-pro"]:
                 try:
                     self.model = genai.GenerativeModel(model_name)
                     logger.info(f"Gemini ready: {model_name}")
                     break
-                except Exception:
-                    continue
+                except Exception as e:
+                    logger.warning(f"Model {model_name} failed: {e}")
             if not self.model:
                 logger.error("No Gemini model available")
         except Exception as e:
@@ -31,29 +30,32 @@ class GeminiService:
 
     async def generate_content(self, prompt: str) -> str:
         if not self.model:
-            logger.warning("Gemini not available - using mock")
+            logger.warning("Gemini model is None - returning mock")
             return self._mock()
         try:
-            logger.info(f"Calling Gemini... prompt length={len(prompt)}")
+            logger.info(f"Calling Gemini API... ({len(prompt)} chars)")
 
             def _call():
-                resp = self.model.generate_content(
+                return self.model.generate_content(
                     prompt,
-                    generation_config={"temperature": 0.3, "max_output_tokens": 500},
-                )
-                return resp.text
+                    generation_config={
+                        "temperature": 0.3,
+                        "max_output_tokens": 300,
+                    },
+                ).text
 
             result = await asyncio.wait_for(
                 asyncio.to_thread(_call),
-                timeout=25.0,
+                timeout=55.0,   # เพิ่มจาก 25 → 55 วินาที
             )
-            logger.info(f"Gemini OK: {result[:80]}")
+            logger.info(f"Gemini response OK: '{result[:100]}'")
             return result
+
         except asyncio.TimeoutError:
-            logger.error("Gemini timeout after 25s")
+            logger.error("Gemini TIMEOUT after 55s")
             return self._mock()
         except Exception as e:
-            logger.error(f"Gemini error: {type(e).__name__}: {e}")
+            logger.error(f"Gemini FAILED: {type(e).__name__}: {e}")
             return self._mock()
 
     def _mock(self) -> str:
