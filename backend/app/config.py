@@ -17,18 +17,17 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     # Database
-    DATABASE_URL: str
-    DB_POOL_SIZE: int = 10
-    DB_MAX_OVERFLOW: int = 20
+    DATABASE_URL: str = ""
 
-    # Google Cloud
-    GOOGLE_CLOUD_PROJECT: str
-    GCS_BUCKET_NAME: str
+    # Google Cloud (optional — sheets_service has mock fallback)
+    GOOGLE_CLOUD_PROJECT: Optional[str] = None
+    GCS_BUCKET_NAME: Optional[str] = None
     GOOGLE_APPLICATION_CREDENTIALS: Optional[str] = None
     GOOGLE_APPLICATION_CREDENTIALS_JSON: Optional[str] = None
+    GOOGLE_SHEET_ID: Optional[str] = None
 
-    # Gemini API
-    GEMINI_API_KEY: str
+    # Gemini API (optional — gemini_service has mock fallback)
+    GEMINI_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-1.5-flash"
     GEMINI_MAX_RETRIES: int = 3
     GEMINI_TIMEOUT: int = 30
@@ -45,16 +44,16 @@ class Settings(BaseSettings):
     REDIS_MAX_CONNECTIONS: int = 10
 
     # JWT
-    JWT_SECRET: str
+    JWT_SECRET: str = "dev-secret-change-in-production"
     JWT_ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     # Google Maps
-    GOOGLE_MAPS_API_KEY: str
+    GOOGLE_MAPS_API_KEY: Optional[str] = None
 
     # CORS
-    CORS_ORIGINS: str = "http://localhost:3000"
+    CORS_ORIGINS: str = "http://localhost:3000,https://snapbuddy-backend.onrender.com"
 
     # File Upload
     MAX_UPLOAD_SIZE: int = 10485760  # 10MB
@@ -72,7 +71,7 @@ class Settings(BaseSettings):
     DEFAULT_PAGE_SIZE: int = 20
     MAX_PAGE_SIZE: int = 100
 
-    # Matching Algorithm
+    # Matching Algorithm weights
     STYLE_WEIGHT: float = 0.40
     PERFORMANCE_WEIGHT: float = 0.25
     BUDGET_WEIGHT: float = 0.15
@@ -83,20 +82,18 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=True,
+        extra="ignore",
     )
 
     @property
     def cors_origins_list(self) -> List[str]:
-        """Parse CORS origins into list."""
-        return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]
+        return [o.strip() for o in self.CORS_ORIGINS.split(",")]
 
     @property
     def allowed_extensions_list(self) -> List[str]:
-        """Parse allowed extensions into list."""
-        return [ext.strip() for ext in self.ALLOWED_EXTENSIONS.split(",")]
+        return [e.strip() for e in self.ALLOWED_EXTENSIONS.split(",")]
 
-    def get_google_credentials(self) -> Optional[dict]:
-        """Get Google credentials as dict."""
+    def get_google_credentials(self):
         if self.GOOGLE_APPLICATION_CREDENTIALS_JSON:
             try:
                 return json.loads(self.GOOGLE_APPLICATION_CREDENTIALS_JSON)
@@ -104,19 +101,10 @@ class Settings(BaseSettings):
                 pass
         return None
 
-    @property
-    def qdrant_connection_url(self) -> str:
-        """Get Qdrant connection URL."""
-        if self.QDRANT_URL:
-            return self.QDRANT_URL
-        return f"http://{self.QDRANT_HOST}:{self.QDRANT_PORT}"
-
 
 @lru_cache()
 def get_settings() -> Settings:
-    """Get cached settings instance."""
     return Settings()
 
 
-# Global settings instance
 settings = get_settings()
