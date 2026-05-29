@@ -18,6 +18,8 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = ""
+    DB_POOL_SIZE: int = 10
+    DB_MAX_OVERFLOW: int = 20
 
     # Google Cloud (optional — sheets_service has mock fallback)
     GOOGLE_CLOUD_PROJECT: Optional[str] = None
@@ -92,6 +94,12 @@ class Settings(BaseSettings):
     @property
     def allowed_extensions_list(self) -> List[str]:
         return [e.strip() for e in self.ALLOWED_EXTENSIONS.split(",")]
+
+    @property
+    def qdrant_connection_url(self) -> str:
+        if self.QDRANT_URL:
+            return self.QDRANT_URL
+        return f"http://{self.QDRANT_HOST}:{self.QDRANT_PORT}"
 
     def get_google_credentials(self):
         if self.GOOGLE_APPLICATION_CREDENTIALS_JSON:
