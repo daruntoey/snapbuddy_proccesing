@@ -1,4 +1,4 @@
-"""Gemini service — requests + asyncio.to_thread."""
+"""Gemini service — requests + asyncio.to_thread, thinking disabled."""
 import asyncio
 import json
 import os
@@ -7,67 +7,82 @@ from loguru import logger
 
 
 class GeminiService:
-    # gemini-2.5-flash is confirmed working from /debug/gemini-models
+    # Confirmed working models from /debug/gemini-models
     ENDPOINTS = [
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent",
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent",
-        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview:generateContent",
+        ("v1beta", "gemini-2.5-flash"),
+        ("v1beta", "gemini-flash-latest"),
+        ("v1beta", "gemini-2.5-flash-lite"),
+        ("v1beta", "gemini-1.5-flash"),
     ]
+    BASE = "https://generativelanguage.googleapis.com"
 
     def __init__(self):
         self.api_key = os.getenv("GEMINI_API_KEY", "").strip()
-        self.working_url: str | None = None
+        self.working_endpoint = None  # cached (version, model) tuple
         if not self.api_key:
             logger.warning("GEMINI_API_KEY not set - will use mock")
         else:
             logger.info(f"GeminiService ready, key_length={len(self.api_key)}")
 
-    def _sync_call(self, url: str, prompt: str) -> dict:
-        payload = {
+    def _build_payload(self, prompt: str) -> dict:
+        return {
             "contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {
                 "temperature": 0.3,
                 "maxOutputTokens": 2048,
+                # Disable thinking to prevent token budget consumption
+                "thinkingConfig": {"thinkingBudget": 0},
             },
         }
+
+    def _sync_call(self, version: str, model: str, prompt: str) -> dict:
+        url = f"{self.BASE}/{version}/models/{model}:generateContent"
         resp = requests.post(
             f"{url}?key={self.api_key}",
-            json=payload,
+            json=self._build_payload(prompt),
             headers={"Content-Type": "application/json"},
             timeout=30,
-            verify=True,
         )
-        return {"status": resp.status_code, "body": resp.text}
+        return {"status": resp.status_code, "body": resp.text, "model": model}
+
+    def _extract_text(self, body: str) -> str:
+        """Extract text from Gemini response, skipping thinking parts."""
+        data = json.loads(body)
+        parts = data["candidates"][0]["content"]["parts"]
+        # Skip thinking parts (thought: true), get actual response
+        for part in parts:
+            if not part.get("thought", False) and "text" in part:
+                return part["text"]
+        # Fallback: return first text part
+        return parts[0].get("text", "")
 
     async def generate_content(self, prompt: str) -> str:
         if not self.api_key:
             return self._mock()
 
-        urls = [self.working_url] if self.working_url else self.ENDPOINTS
+        endpoints = (
+            [self.working_endpoint] if self.working_endpoint
+            else self.ENDPOINTS
+        )
 
-        for url in urls:
-            model = url.split("/models/")[-1].split(":")[0]
-            logger.info(f"Trying: {model}")
+        for version, model in endpoints:
+            logger.info(f"Trying: {model} ({version})")
             try:
-                result = await asyncio.to_thread(self._sync_call, url, prompt)
+                result = await asyncio.to_thread(
+                    self._sync_call, version, model, prompt
+                )
                 status = result["status"]
                 body = result["body"]
                 logger.info(f"HTTP {status} from {model}")
 
                 if status == 200:
-                    data = json.loads(body)
-                    text = data["candidates"][0]["content"]["parts"][0]["text"]
-                    logger.info(f"Gemini OK ({model}): '{text[:80]}'")
-                    self.working_url = url
+                    text = self._extract_text(body)
+                    logger.info(f"Gemini OK ({model}): '{text[:100]}'")
+                    self.working_endpoint = (version, model)
                     return text
 
-                if status in (400, 404):
+                if status in (400, 404, 429):
                     logger.warning(f"{model} returned {status}, trying next...")
-                    continue
-
-                if status == 429:
-                    logger.warning(f"{model} rate limited, trying next...")
                     continue
 
                 logger.error(f"Gemini {status} from {model}: {body[:200]}")
@@ -75,9 +90,6 @@ class GeminiService:
 
             except requests.exceptions.Timeout:
                 logger.error(f"{model} timed out")
-                continue
-            except requests.exceptions.ConnectionError as e:
-                logger.error(f"{model} connection error: {e}")
                 continue
             except Exception as e:
                 logger.error(f"{model} error: {type(e).__name__}: {e}")
