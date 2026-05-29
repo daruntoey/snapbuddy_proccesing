@@ -1,4 +1,4 @@
-"""AI-powered matching service using buddyProfile + buddyPortfolio from Google Sheets."""
+"""AI matching — keyword fallback + NLP when available."""
 from typing import List, Dict, Optional
 import numpy as np
 from loguru import logger
@@ -9,12 +9,6 @@ from app.ai.nlp_service import nlp_service
 
 
 class AIMatchingService:
-    """
-    Match buddies to a user's request using:
-    1. NLP cosine-similarity on combined profile+portfolio text
-    2. Rating bonus
-    3. Gemini explanation for top-5 results
-    """
 
     async def match_buddies(
         self,
@@ -24,129 +18,112 @@ class AIMatchingService:
         min_rating: Optional[float] = None,
         top_k: int = 10,
     ) -> List[Dict]:
-        """
-        Main entry point.
+        logger.info(f"match_buddies start: '{user_description[:60]}'")
 
-        Returns up to `top_k` ranked buddy dicts with added fields:
-          match_score  – 0-100
-          similarity   – cosine similarity 0-1
-          explanation  – Gemini-generated reason (top 5 only)
-          portfolio    – list of portfolio items for this buddy
-        """
-        # 1. Fetch buddies from Sheets (pre-filtered)
-        buddies = await sheets_service.get_buddies(
-            min_rating=min_rating,
-            city=city,
-        )
+        # 1. Get buddies
+        buddies = await sheets_service.get_buddies(min_rating=min_rating, city=city)
+        logger.info(f"Buddies from Sheets: {len(buddies)}")
+
         if not buddies:
-            logger.warning("No buddies returned from Sheets")
+            logger.warning("No buddies returned")
             return []
 
-        # 2. Embed the user's request
-        user_emb = await nlp_service.extract_text_embedding(user_description)
-        if user_emb is None:
-            logger.error("Could not compute user embedding")
-            return []
+        # 2. Try NLP embedding (optional)
+        user_emb = None
+        try:
+            user_emb = await nlp_service.extract_text_embedding(user_description)
+            logger.info("NLP embedding ready")
+        except Exception as e:
+            logger.warning(f"NLP unavailable: {e}")
 
         # 3. Score each buddy
-        scored: List[Dict] = []
+        user_words = set(user_description.lower().replace(",", " ").split())
+        scored = []
+
         for buddy in buddies:
             try:
-                buddy_text = await sheets_service.get_buddy_embedding_text(buddy)
-                buddy_emb = await nlp_service.extract_text_embedding(buddy_text)
-                if buddy_emb is None:
-                    continue
+                buddy_text = (
+                    buddy.get("top_styles", "") + " "
+                    + buddy.get("bio", "") + " "
+                    + buddy.get("city", "")
+                ).lower()
+                buddy_words = set(buddy_text.replace(",", " ").split())
 
-                similarity = self._cosine_similarity(user_emb, buddy_emb)
+                # Keyword similarity (always works)
+                common = user_words & buddy_words
+                keyword_sim = len(common) / max(len(user_words), 1)
 
-                # Base score from similarity (0-100)
-                base = similarity * 100
+                # NLP similarity (if available)
+                nlp_sim = keyword_sim
+                if user_emb is not None:
+                    try:
+                        buddy_emb = await nlp_service.extract_text_embedding(buddy_text)
+                        if buddy_emb is not None:
+                            nlp_sim = self._cosine(user_emb, buddy_emb)
+                    except Exception:
+                        pass
 
-                # Rating bonus: up to +10 pts
-                rating = buddy.get("average_rating", 0) or 0
-                rating_bonus = (rating / 5.0) * 10
+                similarity = (nlp_sim * 0.6) + (keyword_sim * 0.4)
 
-                # Experience bonus: up to +5 pts
-                exp = min(buddy.get("experience_year", 0) or 0, 10)
-                exp_bonus = (exp / 10.0) * 5
+                rating = float(buddy.get("average_rating", 0) or 0)
+                exp = min(int(buddy.get("experience_year", 0) or 0), 10)
+                portfolio = min(int(buddy.get("portfolio_count", 0) or 0), 200)
 
-                # Portfolio depth bonus: up to +5 pts
-                portfolio_count = buddy.get("portfolio_count", 0) or 0
-                portfolio_bonus = min(portfolio_count / 200.0, 1.0) * 5
-
-                final_score = round(base + rating_bonus + exp_bonus + portfolio_bonus, 1)
+                score = round(
+                    similarity * 70
+                    + (rating / 5.0) * 15
+                    + (exp / 10.0) * 10
+                    + (portfolio / 200.0) * 5,
+                    1,
+                )
 
                 scored.append({
                     **buddy,
-                    "match_score": final_score,
+                    "match_score": score,
                     "similarity": round(float(similarity), 4),
-                    "explanation": "",   # filled below for top-5
-                    "portfolio": [],     # filled below for top-5
+                    "explanation": "",
+                    "portfolio": [],
                 })
             except Exception as e:
-                logger.warning(f"Scoring failed for {buddy.get('buddy_id')}: {e}")
+                logger.warning(f"Score failed {buddy.get('buddy_id')}: {e}")
 
-        # 4. Sort descending by match score
+        # 4. Sort
         scored.sort(key=lambda x: x["match_score"], reverse=True)
         top = scored[:top_k]
+        logger.info(f"Top {len(top)} matches, best score={top[0]['match_score'] if top else 0}")
 
-        # 5. Enrich top-5 with portfolio items + Gemini explanation
+        # 5. Enrich top 5
         for buddy in top[:5]:
-            # Portfolio
             try:
                 buddy["portfolio"] = await sheets_service.get_portfolio(buddy["buddy_id"])
             except Exception:
                 buddy["portfolio"] = []
+            buddy["explanation"] = await self._explain(user_description, buddy)
 
-            # Gemini explanation
-            buddy["explanation"] = await self._explain_match(user_description, buddy)
-
-        logger.info(f"✅ Matched {len(top)} buddies for query: '{user_description[:60]}'")
         return top
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    def _cosine_similarity(self, a: np.ndarray, b: np.ndarray) -> float:
-        a = np.array(a, dtype=np.float32)
-        b = np.array(b, dtype=np.float32)
-        norm_a = np.linalg.norm(a)
-        norm_b = np.linalg.norm(b)
-        if norm_a == 0 or norm_b == 0:
+    def _cosine(self, a, b) -> float:
+        a, b = np.array(a, dtype=np.float32), np.array(b, dtype=np.float32)
+        na, nb = np.linalg.norm(a), np.linalg.norm(b)
+        if na == 0 or nb == 0:
             return 0.0
-        return float(np.dot(a / norm_a, b / norm_b))
+        return float(np.dot(a / na, b / nb))
 
-    async def _explain_match(self, user_description: str, buddy: Dict) -> str:
+    async def _explain(self, user_desc: str, buddy: Dict) -> str:
         try:
-            portfolio_summary = ""
-            for p in buddy.get("portfolio", [])[:3]:
-                portfolio_summary += (
-                    f"  - {p.get('category','')}: mood={p.get('mood_tag','')}, "
-                    f"light={p.get('lighting_tag','')}, edit={p.get('edit_style','')}\n"
-                )
-
-            prompt = f"""คุณเป็นผู้ช่วย SnapBuddy อธิบายให้ผู้ใช้เข้าใจว่าทำไม buddy คนนี้ถึง match กับที่ต้องการ (1-2 ประโยค ภาษาไทย):
-
-ผู้ใช้ต้องการ: {user_description}
-
-Buddy:
-- ชื่อ/ชื่อเล่น: {buddy.get('nickname') or buddy.get('name', '')}
-- Bio: {buddy.get('bio', '')}
-- สไตล์หลัก: {buddy.get('top_styles', '')}
-- ประสบการณ์: {buddy.get('experience_year', 0)} ปี
-- Rating: {buddy.get('average_rating', 0)}/5
-- Portfolio ตัวอย่าง:
-{portfolio_summary or '  (ไม่มีข้อมูล)'}
-
-ตอบสั้น กระชับ ตรงประเด็น ไม่ต้องขึ้นต้นด้วย "Buddy" หรือชื่อ"""
-
+            prompt = (
+                "สรุป 1 ประโยคว่าทำไม buddy นี้ถึงเหมาะกับผู้ใช้ (ภาษาไทย):\n"
+                "ผู้ใช้ต้องการ: " + user_desc + "\n"
+                "Buddy: " + buddy.get("nickname", "") + " | "
+                + buddy.get("top_styles", "") + " | "
+                + "rating " + str(buddy.get("average_rating", 0))
+            )
             result = await gemini_service.generate_content(prompt)
-            return result.strip() if result else "เหมาะสมกับสไตล์ที่ต้องการ"
+            if "mock" not in result:
+                return result.strip()
         except Exception as e:
-            logger.warning(f"Gemini explanation failed: {e}")
-            return "เหมาะสมกับสไตล์ที่ต้องการ"
+            logger.warning(f"Explain failed: {e}")
+        return "เหมาะสมกับสไตล์ที่ต้องการ"
 
 
-# Global singleton
 ai_matching_service = AIMatchingService()
