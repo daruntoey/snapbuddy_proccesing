@@ -9,10 +9,12 @@ from loguru import logger
 class GeminiService:
     # Updated model list for 2026 — newest first
     ENDPOINTS = [
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent",
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent",
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent",
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-8b:generateContent",
     ]
 
     def __init__(self):
@@ -27,7 +29,7 @@ class GeminiService:
         """Synchronous HTTP call — runs in thread pool."""
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0.3, "maxOutputTokens": 400},
+            "generationConfig": {"temperature": 0.3, "maxOutputTokens": 2048},
         }
         resp = requests.post(
             f"{url}?key={self.api_key}",
